@@ -12,6 +12,19 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Mow Stroke** — the swath between two pointer positions. The Mower cuts a
   capsule with radius `MOW_RADIUS` around that line.
 - **Mower** — one connected visitor.
+- **Bump** — two Mowers touch while they close on each other. A contact while
+  both stand still, or while one only catches up with the other, is not a
+  Bump.
+- **Closing Speed** — how fast two Mowers meet, along the line between them.
+  It is the same number on both screens, so both reach the same answer about
+  the same Bump.
+- **Stun** — the second after a Bump that closed at `STUN_SPEED` or more. A
+  stunned Mower takes no throttle and no steering. It keeps its momentum, it
+  is still pushed by the Mower that hit it, and the blades stay down.
+- **Grace** — the `STUN_GRACE_MS` after a Stun, in which that Mower cannot be
+  stunned again. It is what stops one Mower from holding another.
+- **Stars** — the ring of four Stars a stunned Mower wears. It is the only
+  sign on the screen that says the controls are gone.
 - **Regrowth** — the return of Blade Height to 1. A Lawn nobody mows is
   overgrown again the same day.
 - **Growth Rate** — the seconds one Tile needs for a full Regrowth, from 2 to
@@ -48,6 +61,47 @@ client forgets a Mower it has not heard from for 4 seconds. Hibernation
 therefore costs almost nothing: a Lawn that wakes has forgotten where each
 Mower stands, and the next Mow Stroke says it again.
 
+## A Bump dazes both Mowers
+
+A Bump is one event with two victims. The Mower that drove in is stunned, and
+so is the Mower that stood still, because it is the one that was hit.
+
+Both clients see the same contact — each one pushes itself out of the other —
+so each one dazes itself and says so with `{t:"bump"}`. The Lawn stamps the
+id on it and relays it, exactly as it does with an Emote, and keeps nothing:
+a Stun lasts one second, so it is over long before a Lawn that hibernates
+wakes again.
+
+A Mower therefore never dazes another Mower. It reports its own Stun, the
+same as it reports its own position and its own score, and a rewritten client
+can say no more about anybody else than the truthful one can. Because the
+Stun is on the wire and not worked out on each screen, a Mower that is not in
+the Bump sees the Stars over both of the Mowers that are.
+
+## Only a ram dazes, and only once in a while
+
+A contact is not a Bump. Two Mowers parked against each other touch every
+frame, and a Mower that catches another up and leans on it is a nuisance, not
+a crash. What counts is the Closing Speed: the speed along the line between
+the two. Below `BUMP_SPEED` nothing happens at all. Above it there is dust and
+a shake of the camera. Only above `STUN_SPEED`, which is about half of the
+speed a Mower can drive, do the controls go.
+
+The velocity of the other Mower comes from the two reports it is drawn
+between, because a report says where a Mower was and not how fast it drove.
+It is the way of the travel and not the way of the nose, so a Mower that is
+pushed sideways is measured by where it really goes. A Mower with no report
+to drive to counts as standing still.
+
+Then a Stun buys `STUN_GRACE_MS` of Grace. Without it, one Mower parks beside
+another and rams it again the moment it comes round, and the Mower under the
+wheels never drives again. With it, the worst a Mower can do to another is one
+second in four, and the Mower it holds keeps the other three to drive away in.
+
+The Grace is kept by the Mower that was dazed, because a Mower only ever
+dazes itself. A rewritten client therefore cannot hold anybody: the answer to
+"may I be dazed again" is never asked of the Mower that is doing the ramming.
+
 ## An Emote is read from across the Lawn
 
 An Emote is a card in the air, and a card too small is a card nobody reads at
@@ -67,6 +121,27 @@ The rest is motion, and motion is what says an Emote is new: the card springs
 past its size and back, breathes where it hangs, and lifts away as it ages
 out. A ring leaves it the moment it lands, for the Mower who was looking
 elsewhere. All of it stands still for a visitor who asks for less motion.
+
+## One map, and M grows it
+
+The map in the corner and the map M opens are one map. Hold M and the corner
+map grows out to the middle of the screen, where it holds the whole Lawn; let
+go and it goes back to its corner. Nothing new fades in over it, so a Mower
+never reads two maps of one Lawn at two scales at the same time.
+
+Two things change while it grows. The window on the Lawn widens by the same
+factor every frame — 90 Tiles across in the corner, the whole Lawn when it is
+out — so the ground under the frame runs out at an even pace instead of
+bolting at the end. And the names of the Fields arrive late, because a map
+that fills the screen has the room to write them and the corner has room for
+none of it.
+
+The World Quest Tracker steps aside while the map is out, the way it already
+stands down for the Field banner. It stands over the right of the map, and it
+says what the map says.
+
+The map is held, like the board, and not switched on. A key you hold cannot be
+left on, so a hand that leaves the keyboard always leaves the Lawn in view.
 
 ## The Lawn decides where a Mower is
 

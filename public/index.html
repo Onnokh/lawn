@@ -73,7 +73,12 @@
     position: fixed; right: 24px; top: clamp(100px, 22vh, 190px); z-index: 10; width: 260px;
     pointer-events: none; color: #e6dfcc; text-shadow: 0 1px 2px #090e09;
     isolation: isolate;
+    transition: opacity .18s ease, transform .18s ease;
   }
+  /* The big map is read across the whole screen, and the tracker stands over
+     the right of it. It steps aside while the map is open, the way it already
+     stands down for the field banner: both say the same thing as the map. */
+  body.map-open #world-quests { opacity: 0; transform: translateX(18px); visibility: hidden; }
   #world-quests::before {
     content: ''; position: absolute; inset: 20px -10px -14px; z-index: -1; pointer-events: none;
     background: #11190fc9;
@@ -279,7 +284,7 @@
 <canvas id="hud"></canvas>
 <h1 id="brand">keepmow.ing</h1>
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
-<div id="help">W A S D or arrow keys to drive · hold Space to emote · hold Tab for the board · the blades are always down</div>
+<div id="help">W A S D or arrow keys to drive · hold Space to emote · hold M for the map · hold Tab for the board · the blades are always down</div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
   <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
@@ -308,7 +313,7 @@
 
 <script type="module">
 import { initialScore, updateScore } from '/score.js';
-import { fieldAt, createFieldQuests } from '/fields.js';
+import { fieldAt, FIELD_NAMES, createFieldQuests } from '/fields.js';
 const fieldQuests = createFieldQuests();
 /* ------------------------------------------------------------------ *
  * The Lawn: one shared field, one Durable Object, many Mowers.
@@ -371,6 +376,29 @@ const PEER_TIMEOUT = 4000;
  */
 const INTERP_DELAY = 240;
 const COLLISION_RADIUS = MOWER_SCALE * 0.85;
+/**
+ * A Mower that is bumped is dazed this long: it takes no throttle and no
+ * steering, and it wears a ring of Stars while it comes to its senses.
+ */
+const STUN_MS = 1000;
+/** How much harder a dazed Mower is held back, on top of the usual drag. */
+const STUN_DRAG = 3;
+/** A contact that closes this fast throws up dust and shakes the camera. */
+const BUMP_SPEED = 0.8;
+/**
+ * A contact that closes this fast takes the controls: about half of `MAX_V`.
+ * A Mower that rolls into another is not a Mower that rams it, and only a ram
+ * dazes. Closing speed is the speed the two really meet at, so a Mower that
+ * is only caught up with is not dazed by the Mower behind it.
+ */
+const STUN_SPEED = 6;
+/**
+ * A Mower cannot be dazed again until this long after a daze ends. Without
+ * it one Mower parks on another and rams it again the moment it comes round,
+ * and the Mower under the wheels never drives again. A hostage therefore
+ * costs the Lawn one second in four, and never the whole afternoon.
+ */
+const STUN_GRACE_MS = 3000;
 let myId = "";
 /** Your own paint. It comes from your id, so every screen agrees on it. */
 let myHue = 80;
@@ -632,6 +660,11 @@ function connect() {
       const newest = p.buf[p.buf.length - 1];
       if (!newest || at > newest.t) p.buf.push({ t: at, x: m.x, y: m.y, a: m.a });
       peers.set(m.id, p);
+    } else if (m.t === "bumped") {
+      // The Stars of another Mower are its own word, exactly like its
+      // position. A Mower that is not in the bump therefore sees it too.
+      const p = peers.get(m.id);
+      if (p) p.stunUntil = performance.now() + STUN_MS;
     } else if (m.t === "emoted") {
       const p = peers.get(m.id);
       if (p) { p.emote = m.e; p.emoteAt = performance.now(); }
@@ -698,12 +731,39 @@ function sendEmote(i) {
   if (connected) send({ t: "emote", e: i });
 }
 
+/**
+ * Hold M to open the big map. It is held, like the board, so a hand that
+ * leaves the keys always leaves the Lawn in view. The map grows into place
+ * over the Lawn rather than replace it in one frame: `mapAt` is when it last
+ * changed its mind, and every frame reads the shift from the clock.
+ */
+const MAP_MS = 190;
+let mapOpen = false, mapAt = -MAP_MS;
+
+/** How far out the big map is, from 0 (away) to 1 (open). */
+function mapShift() {
+  if (reducedMotion.matches) return mapOpen ? 1 : 0;
+  const t = Math.min(1, (performance.now() - mapAt) / MAP_MS);
+  const eased = t * t * (3 - 2 * t);
+  return mapOpen ? eased : 1 - eased;
+}
+
+function showMap(open) {
+  if (open === mapOpen) return;
+  // A map sent back half open goes back from where it stands, not from the end.
+  const from = mapShift();
+  mapOpen = open;
+  mapAt = performance.now() - MAP_MS * (open ? from : 1 - from);
+  document.body.classList.toggle("map-open", open);
+}
+
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   keys.add(k);
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "tab"].includes(k)) e.preventDefault();
   if (e.repeat) return;
   if (k === "tab") openBoard();
+  else if (k === "m") showMap(true);
   else if (k === " ") { pickerOpen = true; pickerAt = performance.now(); }
   else if (pickerOpen && (k === "a" || k === "arrowleft")) pickerPick = (pickerPick + EMOTES.length - 1) % EMOTES.length;
   else if (pickerOpen && (k === "d" || k === "arrowright")) pickerPick = (pickerPick + 1) % EMOTES.length;
@@ -713,10 +773,11 @@ addEventListener("keyup", (e) => {
   const k = e.key.toLowerCase();
   keys.delete(k);
   if (k === " " && pickerOpen) { pickerOpen = false; sendEmote(pickerPick); }
+  if (k === "m") showMap(false);
   if (k === "tab") closeBoard();
 });
 addEventListener("blur", () => {
-  keys.clear(); pickerOpen = false; stick.mag = 0; closeBoard(); showEmoteRow(false);
+  keys.clear(); pickerOpen = false; showMap(false); stick.mag = 0; closeBoard(); showEmoteRow(false);
 });
 const held = (...k) => k.some((x) => keys.has(x));
 
@@ -881,18 +942,41 @@ let sendAt = 0, moved = false, posAt = 0;
 const bumps = [];
 const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
 const lastContact = new Map();
+/** When your own daze ends, on the clock of `performance.now()`. */
+let stunUntil = 0;
+/** When you may be dazed again. A daze always buys its own `STUN_GRACE_MS`. */
+let stunReadyAt = 0;
 
-function bump(id, x, y, now) {
+/**
+ * Two Mowers meet at `closing` Tiles a second. Both are dazed, because a bump
+ * is one event and the Mower that was standing still felt it too. Both
+ * clients measure the same closing speed, so both reach the same answer, and
+ * each one dazes itself and says so. A Mower therefore never dazes another
+ * Mower: it only reports its own daze, the same as it reports its own
+ * position and its own score. That also means a rewritten client cannot hold
+ * anybody but itself: the grace that follows a daze is kept by the Mower that
+ * was dazed.
+ *
+ * A contact below `BUMP_SPEED` is nothing at all: two Mowers parked against
+ * each other touch every frame. A contact below `STUN_SPEED` throws dust and
+ * leaves the controls alone.
+ */
+function bump(id, x, y, now, closing) {
   const previous = lastContact.get(id) ?? -Infinity;
   lastContact.set(id, now);
-  if (now - previous < 350 || Math.abs(me.v) < 0.8) return;
+  if (now - previous < 350 || closing < BUMP_SPEED) return;
   bumps.push({ x, y, born: now });
   if (bumps.length > 12) bumps.shift();
+  if (closing < STUN_SPEED || now < stunReadyAt) return;
+  stunUntil = now + STUN_MS;
+  stunReadyAt = stunUntil + STUN_GRACE_MS;
+  if (connected) send({ t: "bump" });
 }
 
 function moveMower(dx, dy, now) {
   const radius = COLLISION_RADIUS;
   const gap = radius * 2;
+  const mvx = Math.cos(me.a) * me.v, mvy = Math.sin(me.a) * me.v;
   // Small steps keep a fast mower from crossing another between frames.
   const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / (radius * 0.5)));
   for (let step = 0; step < steps; step++) {
@@ -907,7 +991,10 @@ function moveMower(dx, dy, now) {
         // Opposite fallback directions also separate simultaneous spawns.
         const nx = distance > 0.001 ? ox / distance : (myId < id ? -1 : 1);
         const ny = distance > 0.001 ? oy / distance : 0;
-        bump(id, p.x + nx * radius, p.y + ny * radius, now);
+        // How fast the two really close on each other, along the line
+        // between them. Two Mowers driving side by side touch at nothing.
+        const closing = ((p.vx ?? 0) - mvx) * nx + ((p.vy ?? 0) - mvy) * ny;
+        bump(id, p.x + nx * radius, p.y + ny * radius, now, closing);
         me.x += nx * (gap - distance);
         me.y += ny * (gap - distance);
       }
@@ -919,6 +1006,10 @@ function moveMower(dx, dy, now) {
 
 function drive(dt) {
   mowing *= Math.exp(-dt * 7);
+  const now = performance.now();
+  // A dazed Mower keeps its momentum and loses its controls. It is still
+  // pushed by the Mower that hit it, and the blades are still down.
+  const stunned = now < stunUntil;
   let fwd = (held("w", "arrowup") ? 1 : 0) - (held("s", "arrowdown") ? 1 : 0);
   // Left and right choose an Emote while the picker is open, so the wheels of
   // the Mower stay straight. Forward and back still drive.
@@ -934,21 +1025,23 @@ function drive(dt) {
     turn = Math.max(-1, Math.min(1, off * 2.2));
   }
 
+  if (stunned) { fwd = 0; turn = 0; }
   me.v += fwd * ACCEL * dt;
-  me.v -= me.v * DRAG * dt;
+  me.v -= me.v * DRAG * (stunned ? STUN_DRAG : 1) * dt;
   me.v = Math.max(-MAX_V * 0.5, Math.min(MAX_V, me.v));
   // A mower only steers while the wheels turn, same as the real thing.
   me.a += turn * TURN * dt * Math.min(1, 0.25 + Math.abs(me.v) / 4) * Math.sign(me.v || 1);
+  // The daze reads on the Mower itself, and not only in the Stars above it.
+  if (stunned && !reducedMotion.matches) me.a += Math.sin(now * 0.021) * 1.3 * dt;
 
   const px = me.x, py = me.y;
-  moveMower(Math.cos(me.a) * me.v * dt, Math.sin(me.a) * me.v * dt, performance.now());
+  moveMower(Math.cos(me.a) * me.v * dt, Math.sin(me.a) * me.v * dt, now);
 
   if (px !== me.x || py !== me.y) {
     cut(px, py, me.x, me.y, me.a, true);
     moved = true;
   }
 
-  const now = performance.now();
   if (now - positionSavedAt > 500) { savePosition(); positionSavedAt = now; }
   // A Mow Stroke says where the Mower is, not where the swath starts. The
   // Lawn cuts from where it last saw this Mower, so a Mower cannot name a
@@ -991,8 +1084,17 @@ function interpolatePeer(p, renderTime) {
   const from = buf[0];
   if (!from) return;
   const to = buf[1];
-  if (!to || renderTime <= from.t) { p.x = from.x; p.y = from.y; p.a = from.a; return; }
-  if (renderTime >= to.t) { p.x = to.x; p.y = to.y; p.a = to.a; return; }
+  // A Mower that is held at a report is a Mower with no report to drive to,
+  // so it counts as standing still: a bump needs to know which way the Mower
+  // that arrived was driving, and a report says where it was, not how fast.
+  if (!to || renderTime <= from.t) { p.x = from.x; p.y = from.y; p.a = from.a; p.vx = p.vy = 0; return; }
+  if (renderTime >= to.t) { p.x = to.x; p.y = to.y; p.a = to.a; p.vx = p.vy = 0; return; }
+  // Where it really went between the two reports it sits between, in Tiles a
+  // second. It is the way of the travel and not the way of the nose: a Mower
+  // that is pushed sideways points one way and moves another.
+  const span = (to.t - from.t) / 1000;
+  p.vx = (to.x - from.x) / span;
+  p.vy = (to.y - from.y) / span;
   const k = (renderTime - from.t) / (to.t - from.t);
   p.x = from.x + (to.x - from.x) * k;
   p.y = from.y + (to.y - from.y) * k;
@@ -2156,6 +2258,65 @@ function drawBumps(cw, ch, dpr) {
   g.restore();
 }
 
+/** One five-pointed Star, turned by `turn` radians. */
+function starPath(x, y, r, turn) {
+  g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = turn - Math.PI / 2 + i * Math.PI / 5;
+    const rad = i % 2 ? r * 0.44 : r;
+    const px = x + Math.cos(a) * rad, py = y + Math.sin(a) * rad;
+    if (i) g.lineTo(px, py); else g.moveTo(px, py);
+  }
+  g.closePath();
+}
+
+/**
+ * A dazed Mower wears a ring of Stars. The ring is a circle in the world and
+ * not on the screen, so it keeps the perspective of the Lawn: a Star behind
+ * the Mower is drawn first, smaller and dimmer than the one in front of it.
+ */
+function drawStars(cw, ch, dpr) {
+  const now = performance.now();
+  const dazed = [];
+  for (const p of peers.values()) {
+    if (now - p.seen <= PEER_TIMEOUT && now < (p.stunUntil ?? 0)) {
+      dazed.push({ x: p.x, y: p.y, until: p.stunUntil });
+    }
+  }
+  if (now < stunUntil) dazed.push({ x: me.x, y: me.y, until: stunUntil });
+  if (!dazed.length) return;
+  const still = reducedMotion.matches;
+  const project = projector(cw, ch);
+  g.save();
+  for (const d of dazed) {
+    // 1 the moment of the bump, 0 when the Mower has its controls back.
+    const left = Math.min(1, (d.until - now) / STUN_MS);
+    const fade = Math.min(1, (1 - left) * 9) * Math.min(1, left * 5);
+    const spin = still ? 0.6 : now * 0.005;
+    const ring = [];
+    for (let i = 0; i < 4; i++) {
+      const a = spin + i * Math.PI / 2;
+      const lift = still ? 0 : Math.sin(now * 0.006 + i) * 0.14;
+      const p = project(d.x + Math.cos(a) * 1.6, MOWER_TOP + 1.4 + lift, d.y + Math.sin(a) * 1.6);
+      // Sine of the angle is how near the Star is: the camera looks along the
+      // Lawn from a greater y, so a greater y is nearer the eye.
+      if (p) ring.push({ p, near: Math.sin(a) });
+    }
+    ring.sort((u, v) => u.near - v.near);
+    for (const s of ring) {
+      const near = s.near * 0.5 + 0.5;
+      g.globalAlpha = fade * (0.5 + 0.5 * near);
+      g.fillStyle = "#ffe066";
+      g.strokeStyle = "rgba(58,44,10,.6)";
+      g.lineWidth = 1.4 * dpr;
+      starPath(s.p[0], s.p[1], (9 + 3.5 * near) * dpr, still ? 0 : now * 0.004);
+      g.fill();
+      g.stroke();
+    }
+  }
+  g.restore();
+}
+
 /**
  * An Emote is a card in the air above the Mower, not a badge on it. The card
  * is measured in pixels and the Mower in world units, so the two are tied at
@@ -2307,36 +2468,51 @@ function drawEmotes(cw, ch, dpr) {
 }
 
 /**
- * The minimap owns the bottom right corner, so the touch buttons have to know
- * how much of it the map has taken. Both edges are published as a length in
- * from the bottom and the right, and only when they move: this runs every
- * frame.
+ * There is one map. In the corner it holds a window on the Lawn around the
+ * Mower; M grows that same map out to the middle of the screen, where it
+ * holds the whole Lawn. Nothing fades in over it and nothing is drawn twice:
+ * the frame, the paths and the Mowers travel with it, so the corner is never
+ * a second map that disagrees with the first.
  */
-let mapTop = -1, mapSide = -1;
+function mapOrigin(view, world, centre) {
+  // A view wider than the Lawn centres it rather than pin it to one edge.
+  if (view >= world) return (world - view) / 2;
+  return Math.max(0, Math.min(world - view, centre - view / 2));
+}
 
-function drawMinimap(cw, ch, dpr) {
-  if (!minimapFrame.complete || !minimapFrame.naturalWidth || !minimapOpening.complete || !minimapOpening.naturalWidth) return;
-  // A phone held sideways runs out of height first, so cap against both.
-  const width = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
-  const height = width * 0.75;
-  const margin = 16;
-  // Clear the home button bar, and the credit line that sits under the map.
-  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
-  const left = cw / dpr - width - margin;
-  const top = ch / dpr - height - floor;
-  const fromBottom = Math.round(height + floor), fromRight = Math.round(width + margin);
-  if (fromBottom !== mapTop || fromRight !== mapSide) {
-    mapTop = fromBottom; mapSide = fromRight;
-    document.documentElement.style.setProperty("--map-top", `${fromBottom}px`);
-    document.documentElement.style.setProperty("--map-side", `${fromRight}px`);
+/** Where a Field's name belongs: the middle of the Tiles the Field owns. */
+let fieldMarks = [], fieldMarksFor = "";
+
+function fieldCentres() {
+  const size = `${W}x${H}`;
+  if (fieldMarksFor === size) return fieldMarks;
+  const sums = FIELD_NAMES.map(() => [0, 0, 0]);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const id = fieldAt(x + 0.5, y + 0.5, W, H);
+    if (id < 0) continue;
+    sums[id][0] += x + 0.5; sums[id][1] += y + 0.5; sums[id][2]++;
   }
+  fieldMarks = sums.map(([x, y, n], i) => ({ name: FIELD_NAMES[i], x: x / n, y: y / n }));
+  fieldMarksFor = size;
+  return fieldMarks;
+}
+
+/**
+ * Paint one map into the frame art at the given rectangle. `viewW` is how
+ * much of the Lawn, in world units, the frame holds from side to side; the
+ * height follows from the shape of the opening, so nothing is ever stretched.
+ */
+function paintMap(left, top, width, height, viewW, centreX, centreY, dpr, naming) {
   const mapX = left + width * 0.07, mapY = top + height * 0.14;
   const mapW = width * 0.86, mapH = height * 0.73;
-  const viewW = 90, viewH = viewW * mapH / mapW;
-  const originX = Math.max(0, Math.min(W - viewW, me.x - viewW / 2));
-  const originY = Math.max(0, Math.min(H - viewH, me.y - viewH / 2));
+  const viewH = viewW * mapH / mapW;
+  const originX = mapOrigin(viewW, W, centreX);
+  const originY = mapOrigin(viewH, H, centreY);
   const sx = mapW / viewW, sy = mapH / viewH;
   const point = (x, y) => [mapX + (x - originX) * sx, mapY + (y - originY) * sy];
+  // A bigger map earns bigger markers, but not in proportion: an arrow three
+  // times as wide as the corner's would be a blot on the Lawn it stands on.
+  const mark = Math.sqrt(width / 300);
   const pixelW = Math.round(width * dpr), pixelH = Math.round(height * dpr);
   if (minimapCanvas.width !== pixelW || minimapCanvas.height !== pixelH) {
     minimapCanvas.width = pixelW; minimapCanvas.height = pixelH;
@@ -2366,15 +2542,31 @@ function drawMinimap(cw, ch, dpr) {
     }
     g.stroke();
   }
+  if (naming > 0) {
+    g.globalAlpha = naming;
+    g.font = `${Math.round(Math.max(11, width * 0.021))}px Georgia, serif`;
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.strokeStyle = "#1c2a14";
+    g.lineWidth = 3;
+    g.lineJoin = "round";
+    g.fillStyle = "#f4ffca";
+    for (const field of fieldCentres()) {
+      const p = point(field.x, field.y);
+      g.strokeText(field.name, ...p);
+      g.fillText(field.name, ...p);
+    }
+    g.globalAlpha = 1;
+  }
   for (const p of peers.values()) {
     if (performance.now() - p.seen > PEER_TIMEOUT) continue;
     g.fillStyle = `hsl(${p.hue} 75% 65%)`;
     g.strokeStyle = "#182413";
     g.lineWidth = 1.5;
-    g.beginPath(); g.arc(...point(p.x, p.y), 3.5, 0, Math.PI * 2); g.fill(); g.stroke();
+    g.beginPath(); g.arc(...point(p.x, p.y), 3.5 * mark, 0, Math.PI * 2); g.fill(); g.stroke();
   }
   const [x, y] = point(me.x, me.y);
-  g.translate(x, y); g.rotate(me.a);
+  g.translate(x, y); g.rotate(me.a); g.scale(mark, mark);
   g.fillStyle = "#f4ffca";
   g.strokeStyle = "#243318";
   g.lineWidth = 1.5;
@@ -2389,6 +2581,62 @@ function drawMinimap(cw, ch, dpr) {
   hud.getContext('2d').drawImage(minimapCanvas, Math.round(left * dpr), Math.round(top * dpr));
 }
 
+const mapReady = () => minimapFrame.complete && minimapFrame.naturalWidth
+  && minimapOpening.complete && minimapOpening.naturalWidth;
+
+/**
+ * The minimap owns the bottom right corner, so the touch buttons have to know
+ * how much of it the map has taken. Both edges are published as a length in
+ * from the bottom and the right, and only when they move: this runs every
+ * frame. They stay the corner's own measurements while the map is out, so
+ * the buttons do not follow it across the screen and back.
+ */
+let mapTop = -1, mapSide = -1;
+
+function drawMap(cw, ch, dpr) {
+  if (!mapReady()) return;
+  // A phone held sideways runs out of height first, so cap against both.
+  const cornerW = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
+  const margin = 16;
+  // Clear the home button bar, and the credit line that sits under the map.
+  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
+  const cornerLeft = cw / dpr - cornerW - margin;
+  const cornerTop = ch / dpr - cornerW * 0.75 - floor;
+  const fromBottom = Math.round(cornerW * 0.75 + floor), fromRight = Math.round(cornerW + margin);
+  if (fromBottom !== mapTop || fromRight !== mapSide) {
+    mapTop = fromBottom; mapSide = fromRight;
+    document.documentElement.style.setProperty("--map-top", `${fromBottom}px`);
+    document.documentElement.style.setProperty("--map-side", `${fromRight}px`);
+  }
+
+  const shift = mapShift();
+  const bigW = Math.min(1100, innerWidth * 0.86, innerHeight * 0.86 / 0.75);
+  const bigLeft = (cw / dpr - bigW) / 2, bigTop = (ch / dpr - bigW * 0.75) / 2;
+  // The Lawn is wider than it is tall, and so is the opening, but not by the
+  // same amount: fit the taller of the two and let the Lawn keep a verge.
+  const bigView = Math.max(W, H * 0.86 / (0.73 * 0.75)) * 1.04;
+  const between = (a, b) => a + (b - a) * shift;
+  const width = between(cornerW, bigW);
+  // The window on the Lawn widens by the same factor every frame, so the
+  // ground under the frame runs out at an even pace rather than bolt at the
+  // end. Each step of the walk out is worth as much as the last.
+  const view = 90 * Math.pow(bigView / 90, shift);
+  // A map that fills the screen has the room to name the Fields; the corner
+  // has room for none of it, so the names arrive with the space to hold them.
+  const naming = Math.max(0, (shift - 0.45) / 0.55);
+
+  if (shift > 0) {
+    const hg = hud.getContext('2d');
+    hg.save();
+    hg.globalAlpha = shift * 0.45;
+    hg.fillStyle = "#0b1207";
+    hg.fillRect(0, 0, cw, ch);
+    hg.restore();
+  }
+  paintMap(between(cornerLeft, bigLeft), between(cornerTop, bigTop), width, width * 0.75,
+    view, between(me.x, W / 2), between(me.y, H / 2), dpr, naming);
+}
+
 function drawHud() {
   const dpr = Math.min(devicePixelRatio || 1, innerWidth * innerHeight > 7000000 ? 1 : 1.35);
   const cw = Math.round(innerWidth * dpr), ch = Math.round(innerHeight * dpr);
@@ -2397,8 +2645,9 @@ function drawHud() {
   updateScore(bladesCut, performance.now());
   drawMowing(cw, ch, dpr);
   drawBumps(cw, ch, dpr);
+  drawStars(cw, ch, dpr);
   drawEmotes(cw, ch, dpr);
-  drawMinimap(cw, ch, dpr);
+  drawMap(cw, ch, dpr);
 }
 
 setTimeout(() => (help.style.opacity = "0"), 8000);
