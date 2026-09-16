@@ -171,15 +171,51 @@ curve. They sit beside the Growth Rate table, which was already a copy for the
 same reason. All of them must stay identical to `public/index.html` and
 `public/fields.js`, or the two sides count different grass.
 
-The count is the score of one visit, because a socket is all the Lawn knows of
-a Mower: there is no name to add a visit to. The headline score stays the
-tally of every visit, kept by the browser, and is still only as honest as the
-browser. The board says "this visit" and shows what the Lawn counted, which
-makes it the one number on the screen that a rewritten client cannot invent.
+The count lives in memory and is written to the socket every `TALLY_SAVE_MS`,
+so a Mower that parks while the Lawn hibernates comes back to its score and
+not to zero. It is kept between visits against the key of that Mower, which is
+the next section. The headline and the board therefore show one number, and it
+is the Lawn's.
 
-The count lives in memory and is written to the socket every
-`TALLY_SAVE_MS`, so a Mower that parks while the Lawn hibernates comes back
-to its score and not to zero.
+## A Mower keeps its name
+
+A socket used to be all the Lawn knew of a Mower, so a score lasted one visit
+and a name changed every time the page was opened.
+
+A Mower now holds a key. The Lawn gives one to a Mower that arrives without
+one, keeps the score against it, and gives back the same id and the same score
+when that key comes again. The client keeps it in `localStorage` under
+`lawn:key`. The key is the whole of the proof, so:
+
+- It travels in a message and never in the address of the socket. A query
+  parameter is written to every log between here and the visitor.
+- It is a UUID. A key the Lawn never issued is not an error: that Mower simply
+  becomes somebody new.
+- Whoever holds it is that Mower. There is no password, and no way back when a
+  browser forgets it. That is the price of having no account.
+
+Identity is the first thing a Mower says, and the client sends nothing else
+until the Lawn has answered, so no Mow Stroke is ever filed under the id of a
+socket instead of the id of the visitor. A client that never says who it is —
+a tab that was open across the deploy — still mows and is still scored, under
+its socket, for that visit only.
+
+The name and the colour follow the id, so a Mower is the same Mower to look at
+on every visit.
+
+A score is written to storage on the same debounced alarm that writes the
+Lawn, and once more when the socket closes. It never goes down: two tabs of
+one visitor each count their own blades, and the one that counted fewer must
+not undo the other.
+
+A Mower never hears its own report, so the Lawn sends it a `score` message
+every `SCORE_ECHO_MS`. The client takes that number only when it is higher
+than its own. The echo is up to two seconds behind the grass, and a headline
+that steps backwards every two seconds reads as a fault; the number every
+other Mower sees is the Lawn's either way.
+
+One row of storage is kept for every visitor, for ever. They are small, and
+nothing prunes them yet.
 
 ## Who is on the Lawn
 

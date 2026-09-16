@@ -290,7 +290,7 @@
   <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div></div>
 </div>
 <aside id="board" hidden aria-label="Mowers on the Lawn">
-  <span class="quest-label">On the Lawn &middot; this visit</span>
+  <span class="quest-label">On the Lawn</span>
   <ol id="board-list"></ol>
 </aside>
 <a id="credit" href="https://github.com/Onnokh" target="_blank" rel="noopener noreferrer">Made by Onkie</a>
@@ -384,13 +384,7 @@ let mownAt = null;       // absolute ms per Tile
 let mowDir = null;       // heading of the cut per Tile
 let clockOffset = 0, connected = false, socket = null;
 let strokes = 0, bladesCut = initialScore, mowerCount = 1;
-/**
- * The blades cut since this page opened. The headline score is the tally of
- * every visit, kept in this browser and nowhere else, so the Lawn cannot
- * vouch for it. The board shows this one instead, because the Lawn counts the
- * same blades for every other Mower and the two must be comparable.
- */
-let sessionCut = 0;
+
 let mowing = 0;
 const clippings = [];
 const settling = new Map();
@@ -428,6 +422,20 @@ const peers = new Map();
 
 /** Your Mower. Tile units, a = heading in radians, v = tiles per second. */
 const me = { x: 144, y: 96, a: -Math.PI / 2, v: 0 };
+/**
+ * The key that says which Mower this browser is. The Lawn gives it out once
+ * and keeps the score against it, so the score survives a visit and is a
+ * number the Lawn will vouch for. Losing it means starting again as somebody
+ * new, which is the price of having no account.
+ */
+const KEY_KEY = "lawn:key";
+function myKey() {
+  try { return localStorage.getItem(KEY_KEY) ?? undefined; } catch { return undefined; }
+}
+function rememberKey(key) {
+  try { localStorage.setItem(KEY_KEY, key); } catch { /* a visit without storage is still a visit */ }
+}
+
 const POSITION_KEY = "lawn:mower-position";
 let positionReady = false, positionSavedAt = 0, savedPosition = "";
 
@@ -532,7 +540,7 @@ function cut(x0, y0, x1, y1, heading, mine) {
         const height = heightAt(i, now);
         // Only grass that is really there counts, so the score can never take
         // a number that is not a number.
-        if (height > 0) { bladesCut += height; sessionCut += height; }
+        if (height > 0) bladesCut += height;
         if (height > 0.1) harvested += height;
       }
       const standing = heightAt(i, now);
@@ -568,7 +576,11 @@ function connect() {
 
   ws.addEventListener("open", () => {
     if (ws !== socket) { ws.close(); return; }
-    connected = true; retry = 500;
+    retry = 500;
+    // Say who we are before anything else. Nothing is sent until the Lawn has
+    // answered, so no Mow Stroke and no position is ever filed under the id of
+    // a socket instead of the id of the visitor.
+    ws.send(JSON.stringify({ t: "i", k: myKey() }));
   });
   ws.addEventListener("message", (e) => {
     if (ws !== socket) return;
@@ -585,9 +597,23 @@ function connect() {
       return;
     }
     const m = JSON.parse(e.data);
-    if (m.t === "hello") {
+    if (m.t === "you") {
+      // The Lawn has said which Mower this is. Its score is the Lawn's own
+      // count, so it replaces whatever this browser had written down.
       myId = m.id;
       myHue = hueOf(myId);
+      rememberKey(m.k);
+      bladesCut = m.s;
+      connected = true;
+      return;
+    }
+    if (m.t === "score") {
+      // The Lawn is the one that counts. Never let its number go backwards on
+      // the screen: a report can arrive after grass that is already cut.
+      if (Number.isFinite(m.s) && m.s > bladesCut) bladesCut = m.s;
+      return;
+    }
+    if (m.t === "hello") {
       W = m.w; H = m.h; RADIUS = m.radius;
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       fieldQuests.resize(W, H);
@@ -695,10 +721,11 @@ addEventListener("blur", () => {
 const held = (...k) => k.some((x) => keys.has(x));
 
 /**
- * The board: who is mowing now and how much each has cut on this visit. It is
- * built from presence alone, so a Mower that goes quiet drops off it by
- * itself. Every score on it is counted by the Lawn, so the board is the one
- * number on the screen a rewritten client cannot make up.
+ * The board: who is mowing now and how much each has cut. It is built from
+ * presence alone, so a Mower that goes quiet drops off it by itself. Every
+ * score on it is counted by the Lawn and kept against the key of that Mower,
+ * so it is a number no rewritten client can make up, and it is the same
+ * number after the page is closed and opened again.
  */
 const board = document.getElementById("board");
 const boardList = document.getElementById("board-list");
@@ -711,7 +738,7 @@ function refreshBoard() {
   for (const [id, p] of peers) {
     if (now - p.seen <= PEER_TIMEOUT) rows.push({ name: nameOf(id), score: p.score ?? 0, mine: false });
   }
-  rows.push({ name: myId ? nameOf(myId) : "You", score: Math.round(sessionCut), mine: true });
+  rows.push({ name: myId ? nameOf(myId) : "You", score: Math.round(bladesCut), mine: true });
   rows.sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
   boardList.replaceChildren(...rows.map((r) => {
     const li = document.createElement("li");

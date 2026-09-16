@@ -154,6 +154,12 @@ const MOWERS_PER_ADDRESS = 12;
 const EMOTE_COUNT = 4;
 /** How often a Mower's score is written to its socket, to outlive a hibernation. */
 const TALLY_SAVE_MS = 2000;
+/** How often the Lawn tells a Mower its own score, so the two cannot drift. */
+const SCORE_ECHO_MS = 2000;
+/** Where the score of one Mower is kept, by the key that Mower holds. */
+const WHO_PREFIX = "who:";
+/** A key is a UUID and nothing else. Anything else is treated as no key at all. */
+const KEY_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const STORAGE_KEY = "mownAt";
 const STROKE_KEY = "strokes";
 const PERSIST_DELAY_MS = 2000;
@@ -165,6 +171,11 @@ const PERSIST_DELAY_MS = 2000;
  * open across a deploy.
  */
 type ClientMessage =
+  /**
+   * Who the Mower is. `k` is the key it was given on an earlier visit; a
+   * Mower with no key is given one. It is the first thing a Mower says.
+   */
+  | { t: "i"; k?: string }
   | { t: "mow"; x: number; y: number; x1?: number; y1?: number }
   /**
    * Where a Mower is and which way it points. It no longer says how much it
@@ -183,6 +194,27 @@ interface Budget {
 interface Place {
   x: number;
   y: number;
+}
+
+/**
+ * What rides on a socket. It survives hibernation, so everything the Lawn
+ * needs to go on counting for a Mower without reading storage is here.
+ */
+interface Attachment {
+  /** The name every other Mower knows this one by. */
+  id: string;
+  /** The key this Mower holds, absent for a client that never said who it is. */
+  k?: string;
+  /** The blades it has taken off. */
+  cut: number;
+}
+
+/** What the Lawn keeps for one Mower between visits. */
+interface Who {
+  /** Its id. */
+  i: string;
+  /** Its blades. */
+  c: number;
 }
 
 export class Lawn extends DurableObject {
@@ -206,6 +238,8 @@ export class Lawn extends DurableObject {
   /** Blades this Mower has taken off since it arrived, and when that was saved. */
   private tallies = new WeakMap<WebSocket, number>();
   private talliedAt = new WeakMap<WebSocket, number>();
+  private echoedAt = new WeakMap<WebSocket, number>();
+  private kept = new WeakMap<WebSocket, number>();
 
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
@@ -260,7 +294,7 @@ export class Lawn extends DurableObject {
     // The id rides on the socket, so it survives hibernation too.
     const id = crypto.randomUUID().slice(0, 8);
     this.ctx.acceptWebSocket(server, address ? [address] : []);
-    server.serializeAttachment({ id });
+    server.serializeAttachment({ id, cut: 0 } satisfies Attachment);
     server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
     this.announceMowers();
@@ -268,7 +302,7 @@ export class Lawn extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): void {
+  async webSocketMessage(ws: WebSocket, raw: string | ArrayBuffer): Promise<void> {
     if (typeof raw !== "string" || raw.length > 256) return;
 
     let message: ClientMessage;
@@ -277,7 +311,12 @@ export class Lawn extends DurableObject {
     } catch {
       return;
     }
-    const id = (ws.deserializeAttachment() as { id?: string } | null)?.id ?? "?";
+
+    if (message?.t === "i") {
+      await this.identify(ws, message.k);
+      return;
+    }
+    const id = this.mine(ws).id;
 
     if (message?.t === "pos") {
       // Presence is ephemeral: relay it and keep nothing on disk. A Mower
@@ -301,6 +340,18 @@ export class Lawn extends DurableObject {
         JSON.stringify({ t: "peer", id, x: seen.x, y: seen.y, a, s, n: Date.now() }),
         ws,
       );
+      // A Mower never hears its own report, so the Lawn tells it its score now
+      // and then. Without this the headline drifts from the board the moment
+      // the Lawn cuts less than the Mower asked for.
+      const beat = Date.now();
+      if (beat - (this.echoedAt.get(ws) ?? 0) >= SCORE_ECHO_MS) {
+        this.echoedAt.set(ws, beat);
+        try {
+          ws.send(JSON.stringify({ t: "score", s }));
+        } catch {
+          /* socket is going away */
+        }
+      }
       return;
     }
     if (message?.t === "emote") {
@@ -361,10 +412,12 @@ export class Lawn extends DurableObject {
     this.schedulePersist();
   }
 
-  webSocketClose(ws: WebSocket): void {
-    const id = (ws.deserializeAttachment() as { id?: string } | null)?.id;
-    if (id) this.broadcast(JSON.stringify({ t: "gone", id }), ws);
+  async webSocketClose(ws: WebSocket): Promise<void> {
+    const mine = this.mine(ws);
+    this.broadcast(JSON.stringify({ t: "gone", id: mine.id }), ws);
     this.announceMowers();
+    // Write the score of a Mower that is leaving before the socket is gone.
+    await this.keep(ws);
   }
 
   webSocketError(): void {
@@ -380,6 +433,8 @@ export class Lawn extends DurableObject {
       [`${STORAGE_KEY}:1`]: this.mownAt.buffer.slice(128 * 1024),
       [STROKE_KEY]: this.strokes,
     });
+    // The Lawn changed, so somebody cut something. Keep what they cut.
+    await Promise.all(this.ctx.getWebSockets().map((ws) => this.keep(ws)));
   }
 
   /**
@@ -464,16 +519,51 @@ export class Lawn extends DurableObject {
   }
 
   /**
-   * The blades this Mower has taken off since it arrived. The count lives in
-   * memory, which the Lawn loses when it hibernates, so it is also written to
-   * the socket now and then: a Mower that parks while the Lawn sleeps comes
-   * back to its own score and not to zero.
+   * Say who a Mower is. A Mower that brings the key from an earlier visit gets
+   * that visit's name and score back; a Mower with no key, or a key the Lawn
+   * has never issued, is given a new one to keep. The key is the whole of the
+   * proof, so it never travels in the address of the socket, only in a message.
+   */
+  private async identify(ws: WebSocket, claimed?: unknown): Promise<void> {
+    const mine = this.mine(ws);
+    if (mine.k) return; // A socket says who it is once.
+
+    const key = typeof claimed === "string" && KEY_SHAPE.test(claimed)
+      ? claimed
+      : crypto.randomUUID();
+    let who = await this.ctx.storage.get<Who>(WHO_PREFIX + key);
+    if (!who) {
+      who = { i: crypto.randomUUID().replace(/-/g, "").slice(0, 12), c: 0 };
+      await this.ctx.storage.put(WHO_PREFIX + key, who);
+    }
+
+    // The id of the Mower replaces the id of the socket, so a name and a
+    // colour belong to the visitor and not to the connection.
+    ws.serializeAttachment({ id: who.i, k: key, cut: who.c } satisfies Attachment);
+    this.tallies.set(ws, who.c);
+    try {
+      ws.send(JSON.stringify({ t: "you", id: who.i, k: key, s: Math.round(who.c) }));
+    } catch {
+      /* socket is going away */
+    }
+  }
+
+  /** What rides on this socket. Every socket has this from the moment it opens. */
+  private mine(ws: WebSocket): Attachment {
+    const attachment = ws.deserializeAttachment() as Attachment | null;
+    return attachment ?? { id: "?", cut: 0 };
+  }
+
+  /**
+   * The blades this Mower has taken off. The count lives in memory, which the
+   * Lawn loses when it hibernates, so it is also written to the socket now and
+   * then: a Mower that parks while the Lawn sleeps comes back to its own score
+   * and not to zero.
    */
   private tally(ws: WebSocket): number {
     const held = this.tallies.get(ws);
     if (held !== undefined) return held;
-    const attachment = ws.deserializeAttachment() as { cut?: number } | null;
-    const saved = typeof attachment?.cut === "number" ? attachment.cut : 0;
+    const saved = this.mine(ws).cut;
     this.tallies.set(ws, saved);
     return saved;
   }
@@ -485,8 +575,26 @@ export class Lawn extends DurableObject {
     const now = Date.now();
     if (now - (this.talliedAt.get(ws) ?? 0) < TALLY_SAVE_MS) return;
     this.talliedAt.set(ws, now);
-    const attachment = (ws.deserializeAttachment() as object | null) ?? {};
-    ws.serializeAttachment({ ...attachment, cut: total });
+    ws.serializeAttachment({ ...this.mine(ws), cut: total } satisfies Attachment);
+  }
+
+  /**
+   * Write the score of one Mower where the next visit will find it. It never
+   * goes down: two tabs of one visitor each count their own blades, and the
+   * one that counted fewer must not undo the other.
+   */
+  private async keep(ws: WebSocket): Promise<void> {
+    const mine = this.mine(ws);
+    if (!mine.k) return; // Nothing to keep for a client that never said who it is.
+    const total = this.tally(ws);
+    // A Mower that has cut nothing since the last write costs no storage at
+    // all, not even a read. Most Mowers on a Lawn are standing still.
+    if (this.kept.get(ws) === total) return;
+    this.kept.set(ws, total);
+    const stored = await this.ctx.storage.get<Who>(WHO_PREFIX + mine.k);
+    const best = Math.max(total, stored?.c ?? 0);
+    if (stored && stored.c === best) return;
+    await this.ctx.storage.put(WHO_PREFIX + mine.k, { i: mine.id, c: best });
   }
 
   /** How many Mowers one address has on the Lawn now. */
