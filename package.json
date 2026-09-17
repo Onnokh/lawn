@@ -4,11 +4,13 @@
   "type": "module",
   "scripts": {
     "build:score": "esbuild src/score.js --bundle --format=esm --minify --outfile=public/score.js",
-    "predev": "npm run build:score",
+    "predev": "npm run build:score && npm run build:ball",
     "dev": "wrangler dev",
-    "predeploy": "npm run build:score",
+    "predeploy": "npm run build:score && npm run build:ball",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:ball": "esbuild src/ball.ts --bundle --format=esm --minify --outfile=public/ball.js",
+    "test:ball": "npm run build:ball && node scripts/check-ball.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",

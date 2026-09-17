@@ -313,6 +313,7 @@
 
 <script type="module">
 import { landScore, updateScore } from '/score.js';
+import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
 const fieldQuests = createFieldQuests();
 /* ------------------------------------------------------------------ *
@@ -369,7 +370,8 @@ const MOWER_SLOTS = 24;
 /** Where the paint of the first Mower sits in the camera uniform, in floats. */
 const MOWER_COL0 = 60 + MOWER_SLOTS * 4;
 /** Floats in the camera uniform. Mirrors `struct Cam` in the shader. */
-const CAM_FLOATS = MOWER_COL0 + MOWER_SLOTS * 4;
+const BALL_OFFSET = MOWER_COL0 + MOWER_SLOTS * 4;
+const CAM_FLOATS = BALL_OFFSET + 8;
 const SHADOW_SIZE = 1536;
 /** Texels per Tile and Tiles of margin in the ground bake. Mirrors the shader. */
 const GROUND_RES = 4, GROUND_MARGIN = 12;
@@ -474,6 +476,38 @@ function throwClippings(x, y, heading, amount) {
 const peers = new Map();
 
 /** Your Mower. Tile units, a = heading in radians, v = tiles per second. */
+let ball = null;
+let ballVisual = null;
+let ballReceivedAt = 0;
+let ballFrameAt = 0;
+function receiveBall(message) {
+  if (![message.x, message.y, message.z, message.vx, message.vy, message.vz,
+        message.rollX, message.rollY, message.n].every(Number.isFinite)) return;
+  ball = { ...message };
+  if (!ballVisual) ballVisual = { ...ball };
+  ballReceivedAt = performance.now();
+  ballFrameAt = ballReceivedAt;
+  // Predict only a short distance; stale connections must not launch a ghost ball.
+  const age = Math.min(0.1, Math.max(0, (Date.now() + clockOffset - message.n) / 1000));
+  for (let left = age; left > 0; left -= BALL_STEP) {
+    stepBall(ball, Math.min(BALL_STEP, left), W, H, (x, y) => wetAt(x, y, W, H));
+  }
+}
+function animateBall(ts) {
+  if (!ball) return;
+  const dt = Math.min(0.05, Math.max(0, (ts - ballFrameAt) / 1000));
+  ballFrameAt = ts;
+  if (ts - ballReceivedAt < 200) {
+    for (let left = dt; left > 0; left -= BALL_STEP) {
+      stepBall(ball, Math.min(BALL_STEP, left), W, H, (x, y) => wetAt(x, y, W, H));
+    }
+  }
+  const blend = 1 - Math.exp(-dt * 35);
+  for (const key of ['x', 'y', 'z', 'rollX', 'rollY']) {
+    ballVisual[key] += (ball[key] - ballVisual[key]) * blend;
+  }
+}
+
 const me = { x: 204, y: 136, a: -Math.PI / 2, v: 0 };
 const POSITION_KEY = "lawn:mower-position";
 /**
@@ -692,6 +726,8 @@ function connect() {
       restorePosition();
       clockOffset = m.now - Date.now();
       strokes = m.strokes;
+    } else if (m.t === "ball") {
+      receiveBall(m);
     } else if (m.t === "mow") {
       cut(m.x0, m.y0, m.x1, m.y1, Math.atan2(m.y1 - m.y0, m.x1 - m.x0), false);
       strokes = m.strokes;
@@ -1215,6 +1251,8 @@ const FIELD_WGSL = `struct Cam {
   skyCol   : vec4f,   // rgb; w is one over the sun's half extent
   mowers   : array<vec4f, ${MOWER_SLOTS}>,    // x, z, heading, cutting vibration
   mowerCol : array<vec4f, ${MOWER_SLOTS}>,    // paint
+  ball : vec4f, // x, height, y, radius
+  ballRoll : vec4f,
 };
 
 @group(0) @binding(0) var<uniform> C : Cam;
@@ -1499,7 +1537,11 @@ fn shade(base : vec3f, n : vec3f, wpos : vec3f, aoIn : f32) -> vec3f {
   let cloudPoint = wpos.xz + sun.xz * max(0.0, CLOUD_HEIGHT - wpos.y) / max(sun.y, 0.15);
   let vis = sunlight(wpos) * (1.0 - cloudCover(cloudPoint) * 0.55);
   let sky = C.skyCol.rgb * (C.opts.z * (0.65 + 0.35 * n.y));
-  return base * (sky + C.sunCol.rgb * lam * mix(0.3, 1.0, vis)) * aoIn;
+  let ballHeight = max(0.0, C.ball.y - C.ball.w);
+  let footprint = length(wpos.xz - C.ball.xz) / (C.ball.w + ballHeight * 0.12 + 0.001);
+  let contact = (1.0 - smoothstep(0.25, 1.5, footprint)) * 0.27 / (1.0 + ballHeight * 0.15)
+    * (1.0 - smoothstep(0.0, 1.2, wpos.y)) * step(0.1, C.ball.w);
+  return base * (sky + C.sunCol.rgb * lam * mix(0.3, 1.0, vis)) * aoIn * (1.0 - contact);
 }
 
 @fragment
@@ -1817,6 +1859,53 @@ fn fs_mower(i : MOut) -> @location(0) vec4f {
   if (i.panel > 2.5) { base = vec3f(0.88, 0.87, 0.71); }
   return vec4f(shade(base, normalize(i.nrm), i.wpos, 1.0), 1.0);
 }
+
+/* ---------------- the ball ---------------- */
+fn ballNormal(vi : u32) -> vec3f {
+  let corners = array<vec2f, 6>(vec2f(0, 0), vec2f(1, 0), vec2f(0, 1),
+    vec2f(1, 0), vec2f(1, 1), vec2f(0, 1));
+  let face = vi / 6u;
+  let uv = (vec2f(f32(face % 32u), f32(face / 32u)) + corners[vi % 6u]) / vec2f(32, 20);
+  let latitude = uv.y * 3.14159265;
+  let longitude = uv.x * 6.2831853;
+  return vec3f(sin(latitude) * cos(longitude), cos(latitude), sin(latitude) * sin(longitude));
+}
+@vertex
+fn vs_ball(@builtin(vertex_index) vi : u32) -> MOut {
+  let n = ballNormal(vi);
+  let world = C.ball.xyz + n * C.ball.w;
+  var o : MOut;
+  o.pos = C.viewProj * vec4f(world, 1);
+  o.wpos = world;
+  o.nrm = n;
+  o.tint = vec3f(1);
+  o.panel = 0;
+  return o;
+}
+@vertex
+fn vs_ball_shadow(@builtin(vertex_index) vi : u32) -> @builtin(position) vec4f {
+  return C.lightVP * vec4f(C.ball.xyz + ballNormal(vi) * C.ball.w, 1);
+}
+@fragment
+fn fs_ball(i : MOut) -> @location(0) vec4f {
+  let n = normalize(i.nrm);
+  let cx = cos(C.ballRoll.x); let sx = sin(C.ballRoll.x);
+  let cy = cos(C.ballRoll.y); let sy = sin(C.ballRoll.y);
+  let q = vec3f(n.x * cy + n.y * sy, -n.x * sy + n.y * cy, n.z);
+  let rolled = vec3f(q.x, q.y * cx + q.z * sx, -q.y * sx + q.z * cx);
+  let angle = atan2(rolled.z, rolled.x) + 3.14159265;
+  let panel = u32(floor(angle / 1.04719755)) % 6u;
+  var base = vec3f(0.96, 0.91, 0.72);
+  if (panel == 0u || panel == 3u) { base = vec3f(0.95, 0.22, 0.10); }
+  if (panel == 1u || panel == 4u) { base = vec3f(0.10, 0.62, 0.78); }
+  let seam = 1.0 - smoothstep(0.0, 0.018, min(fract(angle / 1.04719755), 1.0 - fract(angle / 1.04719755)));
+  base *= 1.0 - seam * 0.14;
+  base = mix(base, vec3f(0.98, 0.93, 0.76), smoothstep(0.92, 0.96, abs(rolled.y)));
+  let view = normalize(C.eye.xyz - i.wpos);
+  let shine = pow(max(0.0, dot(n, normalize(normalize(C.sun.xyz) + view))), 48.0) * 0.28;
+  return vec4f(shade(base, n, i.wpos, 0.88 + 0.12 * max(n.y, 0.0)) + vec3f(shine), 1);
+}
+
 `;
 
 /* ---- small matrix helpers ---- */
@@ -2009,6 +2098,8 @@ async function initField() {
   const mowers = mk("vs_mower", "fs_mower", "triangle-list");
   const bladesCast = caster("vs_blade_shadow", "triangle-strip");
   const mowersCast = caster("vs_mower_shadow", "triangle-list");
+  const ballDraw = mk("vs_ball", "fs_ball", "triangle-list");
+  const ballCast = caster("vs_ball_shadow", "triangle-list");
   const bake = device.createRenderPipeline({
     layout: device.createPipelineLayout({ bindGroupLayouts: [castLayout] }),
     vertex: { module, entryPoint: "vs_bake" },
@@ -2079,7 +2170,7 @@ async function initField() {
 
   return {
     device, ctx, format, depthFormat, cam, mowerBuffer, mowerVertices,
-    blades, ground, flowers, clover, mowers, bladesCast, mowersCast, grow, growFlowers, growClover, bake,
+    ballDraw, ballCast, blades, ground, flowers, clover, mowers, bladesCast, mowersCast, grow, growFlowers, growClover, bake,
     bindCast, bindFor, bindMain: null, bindGrow: null, shadowView,
     drawArgs, drawReset: new Uint32Array([(SEGS + 1) * 2, 0, 0, 0]),
     flowerArgs, flowerReset: new Uint32Array([66, 0, 0, 0]),
@@ -2235,6 +2326,9 @@ function render(now, ts) {
     const [r, gg, b] = hslToRgb(m.hue, m.me ? 0.72 : 0.58, m.me ? 0.56 : 0.5);
     C[MOWER_COL0 + k * 4] = r; C[MOWER_COL0 + 1 + k * 4] = gg; C[MOWER_COL0 + 2 + k * 4] = b;
   });
+  if (ball) {
+    C.set([ballVisual.x, ballVisual.z, ballVisual.y, BALL_RADIUS, ballVisual.rollX, ballVisual.rollY, 0, 0], BALL_OFFSET);
+  }
   F.device.queue.writeBuffer(F.cam, 0, C);
 
   F.device.queue.writeBuffer(F.drawArgs, 0, F.drawReset);
@@ -2282,6 +2376,7 @@ function render(now, ts) {
     castPass.setVertexBuffer(0, F.mowerBuffer);
     castPass.draw(F.mowerVertices, ms.length);
   }
+  if (ball) { castPass.setPipeline(F.ballCast); castPass.draw(32 * 20 * 6); }
   castPass.end();
 
   // 3. what you can see
@@ -2305,6 +2400,7 @@ function render(now, ts) {
     pass.setVertexBuffer(0, F.mowerBuffer);
     pass.draw(F.mowerVertices, ms.length);
   }
+  if (ball) { pass.setPipeline(F.ballDraw); pass.draw(32 * 20 * 6); }
   pass.end();
   F.device.queue.submit([enc.finish()]);
 }
@@ -2700,6 +2796,13 @@ function paintMap(left, top, width, height, viewW, centreX, centreY, dpr, naming
     g.lineWidth = 1.5;
     g.beginPath(); g.arc(...point(p.x, p.y), 3.5 * mark, 0, Math.PI * 2); g.fill(); g.stroke();
   }
+  if (ballVisual) {
+    const [bx, by] = point(ballVisual.x, ballVisual.y);
+    g.fillStyle = "#fff0bc";
+    g.strokeStyle = "#bf4925";
+    g.lineWidth = 2 * mark;
+    g.beginPath(); g.arc(bx, by, 4 * mark, 0, Math.PI * 2); g.fill(); g.stroke();
+  }
   const [x, y] = point(me.x, me.y);
   g.translate(x, y); g.rotate(me.a); g.scale(mark, mark);
   g.fillStyle = "#f4ffca";
@@ -2807,6 +2910,7 @@ function frame(ts) {
   if (!mownAt || !F) return;
   const now = Date.now() + clockOffset;
   drive(dt);
+  animateBall(ts);
   if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
   fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now));
   render(now, ts);

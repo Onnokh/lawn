@@ -1,3 +1,4 @@
+import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { DurableObject } from "cloudflare:workers";
 
 /**
@@ -369,6 +370,13 @@ interface Place {
 export class Lawn extends DurableObject {
   /** Epoch seconds of the last Mow Stroke per Tile. 0 means never mown. */
   private mownAt!: Uint32Array;
+  private ball = createBall(LAWN_WIDTH / 2 + 7, LAWN_HEIGHT / 2);
+  private ballMowers = new Map<WebSocket, BallMower & { at: number }>();
+  private ballContact?: BallContact;
+  private ballTimer?: ReturnType<typeof setInterval>;
+  private ballTick = 0;
+  private ballSent = 0;
+  private ballSaved = 0;
   private strokes = 0;
   private dirty = false;
   private budgets = new WeakMap<WebSocket, Budget>();
@@ -404,6 +412,8 @@ export class Lawn extends DurableObject {
   constructor(ctx: DurableObjectState, env: unknown) {
     super(ctx as never, env as never);
     ctx.blockConcurrencyWhile(async () => {
+      const savedBall = await ctx.storage.get<Ball>("ball");
+      if (savedBall) this.ball = createBall(savedBall.x, savedBall.y);
       const stored = await readChunks(ctx.storage);
       this.mownAt =
         stored && stored.byteLength === TILE_COUNT * 4
@@ -460,6 +470,7 @@ export class Lawn extends DurableObject {
     server.serializeAttachment({ id, key: "" });
     server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
+    server.send(this.ballMessage());
     this.announceMowers();
 
     return new Response(null, { status: 101, webSocket: client });
@@ -604,6 +615,7 @@ export class Lawn extends DurableObject {
     at: Place,
     a: number,
   ): void {
+    this.trackBallMower(ws, id, at);
     const s = Math.round(this.scores.get(key)?.c ?? 0);
     // Stamp the report. A client draws other Mowers slightly in the past,
     // between two reports, and it needs to know when each one was really
@@ -617,7 +629,62 @@ export class Lawn extends DurableObject {
     this.tell(ws, s);
   }
 
+  private ballMessage(): string {
+    return JSON.stringify({ t: "ball", ...this.ball, n: Date.now() });
+  }
+
+  private trackBallMower(ws: WebSocket, id: string, at: Place): void {
+    const now = Date.now();
+    const previous = this.ballMowers.get(ws);
+    const dt = previous ? (now - previous.at) / 1000 : 0;
+    const vx = previous && dt > 0 && dt < 1 ? (at.x - previous.x) / dt : 0;
+    const vy = previous && dt > 0 && dt < 1 ? (at.y - previous.y) / dt : 0;
+    const speed = Math.hypot(vx, vy);
+    const scale = speed > MAX_SPEED ? MAX_SPEED / speed : 1;
+    this.ballMowers.set(ws, { id, ...at, vx: vx * scale, vy: vy * scale, at: now });
+    if (!this.ballTimer && speed > 0.3 && Math.hypot(at.x - this.ball.x, at.y - this.ball.y) < BALL_RADIUS + MOW_RADIUS * 0.85) {
+      this.ballTick = now;
+      this.ballTimer = setInterval(() => this.tickBall(), 1000 / 30);
+    }
+  }
+
+  private tickBall(): void {
+    const now = Date.now();
+    const steps = Math.min(12, Math.floor((now - this.ballTick) / (BALL_STEP * 1000)));
+    for (let i = 0; i < steps; i++) {
+      this.ballTick += BALL_STEP * 1000;
+      for (const [ws, mower] of this.ballMowers) {
+        if (now - mower.at > 1000) { this.ballMowers.delete(ws); continue; }
+        const contact = hitBall(this.ball, {
+          ...mower,
+          vx: now - mower.at < 180 ? mower.vx : 0,
+          vy: now - mower.at < 180 ? mower.vy : 0,
+        }, this.ballTick, this.ballContact);
+        if (contact) this.ballContact = contact;
+      }
+      stepBall(this.ball, BALL_STEP, LAWN_WIDTH, LAWN_HEIGHT,
+        (x, y) => placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet);
+    }
+    if (now - this.ballTick > 200) this.ballTick = now;
+    const moving = ballMoving(this.ball);
+    if (!moving || now - this.ballSent >= 50) {
+      this.broadcast(this.ballMessage());
+      this.ballSent = now;
+    }
+    if ((!moving || now - this.ballSaved > 2000)
+      && this.ball.z === BALL_RADIUS
+      && placeAt(this.ball.x, this.ball.y, LAWN_WIDTH, LAWN_HEIGHT).wet <= -BALL_RADIUS) {
+      this.ctx.waitUntil(this.ctx.storage.put("ball", this.ball));
+      this.ballSaved = now;
+    }
+    if (!moving) {
+      if (this.ballTimer !== undefined) clearInterval(this.ballTimer);
+      this.ballTimer = undefined;
+    }
+  }
+
   webSocketClose(ws: WebSocket): void {
+    this.ballMowers.delete(ws);
     const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
     if (who?.id) this.broadcast(JSON.stringify({ t: "gone", id: who.id }), ws);
     this.forgetBudget(ws, who?.key || who?.id || "");
@@ -625,6 +692,7 @@ export class Lawn extends DurableObject {
   }
 
   webSocketError(ws: WebSocket): void {
+    this.ballMowers.delete(ws);
     const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
     this.forgetBudget(ws, who?.key || who?.id || "");
     this.announceMowers();

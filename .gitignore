@@ -6,3 +6,6 @@ public/score.js
 
 # Machine-local tool permissions.
 .claude/settings.local.json
+
+# Shared ball physics, built before dev and deploy.
+public/ball.js
