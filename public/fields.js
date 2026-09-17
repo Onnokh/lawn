@@ -47,7 +47,7 @@ export const BRIDGE = 6;
  */
 export const DITCHES = [[1, 4], [3, 4], [5, 8], [6, 7]];
 
-const DITCH_KEYS = new Set(DITCHES.map(([a, b]) => Math.min(a, b) * SEEDS.length + Math.max(a, b)));
+const SHORE_RADIUS = 1.2;
 
 /**
  * Bend the ground before the seeds are measured against it. Without this the
@@ -70,31 +70,36 @@ function warpY(x, y) { return y + 7 * Math.sin(x * 0.045) + 2.6 * Math.sin(x * 0
 export function placeAt(x, y, width, height) {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, second = 0, d0 = Infinity, d1 = Infinity;
+  let first = 0, d0 = Infinity, d1 = Infinity;
+  const distances = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
-    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; second = k; }
+    distances.push(d);
+    if (d < d0) { d1 = d0; d0 = d; first = k; }
+    else if (d < d1) { d1 = d; }
   }
   const edge = (d1 - d0) * 0.5;
-  if (!DITCH_KEYS.has(Math.min(first, second) * SEEDS.length + Math.max(first, second))) {
-    // A plain seam: a lane, with a verge that wanders a little.
-    const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-    return { field: edge <= lane ? -1 : first, wet: -BRIDGE };
+  let wet = -BRIDGE;
+  // Measure every ditch, even across a field boundary. Switching the nearest
+  // pair at a junction must not cut off the shoreline or its collision margin.
+  for (const [a, b] of DITCHES) {
+    const across = Math.abs(distances[a] - distances[b]) * 0.5;
+    let third = Infinity;
+    for (let k = 0; k < SEEDS.length; k++) {
+      if (k !== a && k !== b) third = Math.min(third, distances[k]);
+    }
+    // Leave a dry lane before the third field, with rounded bank corners.
+    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
+    const shore = water(DITCH - across - SHORE_RADIUS, end - SHORE_RADIUS) + SHORE_RADIUS;
+    const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
+    const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
+    const span2 = (px - bx) ** 2 + (py - by) ** 2;
+    const along = Math.sqrt(Math.max(0, span2 - across * across));
+    wet = Math.max(wet, water(shore, along - BRIDGE));
   }
-  // A Ditch, and the one Bridge that cuts it. The Bridge stands at the middle
-  // point between the two seeds, which is always a point on their seam.
-  const bx = (SEEDS[first][0] + SEEDS[second][0]) * 0.5 * width;
-  const by = (SEEDS[first][1] + SEEDS[second][1]) * 0.5 * height;
-  const span = Math.sqrt((px - bx) * (px - bx) + (py - by) * (py - by));
-  // How far down the seam the point lies from the Bridge. The Bridge stands
-  // on the seam, so the two legs and the distance to it make a right angle.
-  const along = Math.sqrt(Math.max(0, span * span - edge * edge));
-  const wet = water(DITCH - edge, along - BRIDGE);
-  if (wet > 0) return { field: -1, wet };
-  // The bank is bare, and so is the Bridge itself.
-  return { field: wet > -BANK || along <= BRIDGE ? -1 : first, wet };
+  const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+  return { field: edge <= lane || wet > -BANK ? -1 : first, wet };
 }
 
 /**
@@ -231,6 +236,7 @@ const LANE = ${LANE.toFixed(3)};
 const DITCH = ${DITCH.toFixed(3)};
 const BANK = ${BANK.toFixed(3)};
 const BRIDGE = ${BRIDGE.toFixed(3)};
+const SHORE_RADIUS = ${SHORE_RADIUS.toFixed(3)};
 const SEED_COUNT = ${SEEDS.length};
 
 fn warpPoint(p : vec2f) -> vec2f {
@@ -248,24 +254,35 @@ fn waterDepth(into : f32, beyond : f32) -> f32 {
 fn placeAt(p : vec2f) -> vec3f {
   var seeds = array<vec2f, SEED_COUNT>(${SEEDS.map(([u, v]) => `vec2f(${u.toFixed(4)}, ${v.toFixed(4)})`).join(', ')});
   let q = warpPoint(p);
+  var distances : array<f32, SEED_COUNT>;
   var first = 0;
-  var second = 0;
   var d0 = 1e20;
   var d1 = 1e20;
   for (var k = 0; k < SEED_COUNT; k = k + 1) {
     let d = length(q - seeds[k] * C.misc2.xy);
-    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; second = k; }
+    distances[k] = d;
+    if (d < d0) { d1 = d0; d0 = d; first = k; }
+    else if (d < d1) { d1 = d; }
   }
   let edge = (d1 - d0) * 0.5;
-  let key = min(first, second) * SEED_COUNT + max(first, second);
-  var ditch = false;
-  ${DITCHES.map(([a, b]) => `if (key == ${Math.min(a, b) * SEEDS.length + Math.max(a, b)}) { ditch = true; }`).join('\n  ')}
-  if (!ditch) { return vec3f(edge, -BRIDGE, f32(first)); }
-  let mid = (seeds[first] + seeds[second]) * 0.5 * C.misc2.xy;
-  let span = length(q - mid);
-  let along = sqrt(max(0.0, span * span - edge * edge));
-  return vec3f(edge, waterDepth(DITCH - edge, along - BRIDGE), f32(first));
+  var wet = -BRIDGE;
+  let ditches = array<vec2i, ${DITCHES.length}>(${DITCHES.map(([a, b]) => `vec2i(${a}, ${b})`).join(', ')});
+  for (var i = 0; i < ${DITCHES.length}; i = i + 1) {
+    let a = ditches[i].x;
+    let b = ditches[i].y;
+    let across = abs(distances[a] - distances[b]) * 0.5;
+    var third = 1e20;
+    for (var k = 0; k < SEED_COUNT; k = k + 1) {
+      if (k != a && k != b) { third = min(third, distances[k]); }
+    }
+    let end = (third - max(distances[a], distances[b])) * 0.5 - LANE - BANK;
+    let shore = waterDepth(DITCH - across - SHORE_RADIUS, end - SHORE_RADIUS) + SHORE_RADIUS;
+    let mid = (seeds[a] + seeds[b]) * 0.5 * C.misc2.xy;
+    let offset = q - mid;
+    let along = sqrt(max(0.0, dot(offset, offset) - across * across));
+    wet = max(wet, waterDepth(shore, along - BRIDGE));
+  }
+  return vec3f(edge, wet, f32(first));
 }
 
 /** 1 on the grass, 0 on a lane, a bank or the water. The verge is soft. */

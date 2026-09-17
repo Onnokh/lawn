@@ -99,8 +99,8 @@ const LANE = 2.3;
 const DITCH = 2.6;
 const BANK = 1.6;
 const BRIDGE = 6;
-const DITCH_KEYS = new Set([[1, 4], [3, 4], [5, 8], [6, 7]]
-  .map(([a, b]) => Math.min(a, b) * SEEDS.length + Math.max(a, b)));
+const DITCHES = [[1, 4], [3, 4], [5, 8], [6, 7]];
+const SHORE_RADIUS = 1.2;
 
 function warpX(x: number, y: number): number {
   return x + 7 * Math.sin(y * 0.052 + 0.6) + 2.6 * Math.sin(y * 0.127 + 2.1);
@@ -124,25 +124,36 @@ function water(into: number, beyond: number): number {
 function placeAt(x: number, y: number, width: number, height: number): { field: number; wet: number } {
   if (x < 0 || y < 0 || x >= width || y >= height) return { field: -1, wet: -BRIDGE };
   const px = warpX(x, y), py = warpY(x, y);
-  let first = 0, second = 0, d0 = Infinity, d1 = Infinity;
+  let first = 0, d0 = Infinity, d1 = Infinity;
+  const distances: number[] = [];
   for (let k = 0; k < SEEDS.length; k++) {
     const dx = px - SEEDS[k][0] * width, dy = py - SEEDS[k][1] * height;
     const d = Math.sqrt(dx * dx + dy * dy);
-    if (d < d0) { d1 = d0; second = first; d0 = d; first = k; }
-    else if (d < d1) { d1 = d; second = k; }
+    distances.push(d);
+    if (d < d0) { d1 = d0; d0 = d; first = k; }
+    else if (d < d1) { d1 = d; }
   }
   const edge = (d1 - d0) * 0.5;
-  if (!DITCH_KEYS.has(Math.min(first, second) * SEEDS.length + Math.max(first, second))) {
-    const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
-    return { field: edge <= lane ? -1 : first, wet: -BRIDGE };
+  let wet = -BRIDGE;
+  // Measure every ditch, even across a field boundary. Switching the nearest
+  // pair at a junction must not cut off the shoreline or its collision margin.
+  for (const [a, b] of DITCHES) {
+    const across = Math.abs(distances[a] - distances[b]) * 0.5;
+    let third = Infinity;
+    for (let k = 0; k < SEEDS.length; k++) {
+      if (k !== a && k !== b) third = Math.min(third, distances[k]);
+    }
+    // Leave a dry lane before the third field, with rounded bank corners.
+    const end = (third - Math.max(distances[a], distances[b])) * 0.5 - LANE - BANK;
+    const shore = water(DITCH - across - SHORE_RADIUS, end - SHORE_RADIUS) + SHORE_RADIUS;
+    const bx = (SEEDS[a][0] + SEEDS[b][0]) * 0.5 * width;
+    const by = (SEEDS[a][1] + SEEDS[b][1]) * 0.5 * height;
+    const span2 = (px - bx) ** 2 + (py - by) ** 2;
+    const along = Math.sqrt(Math.max(0, span2 - across * across));
+    wet = Math.max(wet, water(shore, along - BRIDGE));
   }
-  const bx = (SEEDS[first][0] + SEEDS[second][0]) * 0.5 * width;
-  const by = (SEEDS[first][1] + SEEDS[second][1]) * 0.5 * height;
-  const span = Math.sqrt((px - bx) * (px - bx) + (py - by) * (py - by));
-  const along = Math.sqrt(Math.max(0, span * span - edge * edge));
-  const wet = water(DITCH - edge, along - BRIDGE);
-  if (wet > 0) return { field: -1, wet };
-  return { field: wet > -BANK || along <= BRIDGE ? -1 : first, wet };
+  const lane = LANE + 0.35 * Math.sin(x * 0.19 + y * 0.11);
+  return { field: edge <= lane || wet > -BANK ? -1 : first, wet };
 }
 
 /** Grass grows on a Field. Nothing grows on a lane, a bank or the water. */
