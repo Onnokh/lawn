@@ -327,11 +327,21 @@
     #stick, #stick-knob, .touch-btn { transition: none; }
     #emote-row .touch-btn { animation: none; }
   }
+  #sound-toggle {
+    position: fixed; top: calc(12px + var(--safe-top)); left: 12px;
+    z-index: 25; min-height: 44px; padding: 0 13px;
+    border: 1px solid #f4ffca55; border-radius: 22px;
+    background: #1c2a14df; color: #f4ffca; font: 600 12px system-ui;
+    cursor: pointer; touch-action: manipulation;
+  }
+  #sound-toggle:focus-visible { outline: 2px solid #f4ffca; outline-offset: 3px; }
+  @media (max-width: 700px) { #sound-toggle { top: calc(38px + var(--safe-top)); left: 8px; padding: 0 10px; } }
 </style>
 </head>
 <body>
 <canvas id="gpu"></canvas>
 <canvas id="hud"></canvas>
+<button id="sound-toggle" type="button" aria-pressed="false" aria-label="Enable mower sound">Sound off</button>
 <h1 id="brand">keepmow.ing</h1>
 <div id="score" aria-label="Score"><span id="mower-count">Connecting…</span><number-flow data-will-change></number-flow></div>
 <div id="keys">
@@ -366,10 +376,12 @@
 <div id="fallback"><p id="fallback-text"></p></div>
 
 <script type="module">
+import { createMowerSound } from '/sound.js';
 import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { fieldAt, wetAt, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests } from '/fields.js';
 const fieldQuests = createFieldQuests();
+const mowerSound = createMowerSound(document.getElementById("sound-toggle"));
 /* ------------------------------------------------------------------ *
  * The Lawn: one shared field, one Durable Object, many Mowers.
  * Blade Height is a pure function of the time since a Tile was cut, so
@@ -749,6 +761,7 @@ function cut(x0, y0, x1, y1, heading, mine) {
     }
   }
   fieldDirty = true;
+  if (mine && len2 > 0.0001) mowerSound.cut(harvested);
   if (mine && harvested > 0.1 && len2 > 0.0001) throwClippings(x1, y1, heading, harvested);
 }
 
@@ -3115,9 +3128,10 @@ function frame(ts) {
   gapTotal += ts - last;
   gapCount++;
   last = ts;
-  if (!mownAt || !F) return;
+  if (!mownAt || !F) { mowerSound.update(0, dt, false); return; }
   const now = Date.now() + clockOffset;
   drive(dt, now);
+  mowerSound.update(me.v, dt, connected);
   animateBall(ts);
   if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
   fieldQuests.update(me.x, me.y, ts, i => heightAt(i, now));
