@@ -27,8 +27,9 @@ export function slipstream(me: Driver, peers: Iterable<Peer>, now: number,
 
 /** Heading and travel separate during a drift, then grip pulls them together. */
 export function stepDrive(me: Driver, input: { throttle: number; turn: number; brake: boolean;
-  road: number; grass: number; tow: number; stunned: boolean }, dt: number) {
+  road: number; grass: number; tow: number; stunned: boolean; rain?: number }, dt: number) {
   const { road, grass, stunned } = input;
+  const rain = input.rain ?? 0;
   const throttle = stunned ? 0 : input.throttle;
   const turn = stunned ? 0 : input.turn;
   const brake = !stunned && input.brake;
@@ -37,8 +38,12 @@ export function stepDrive(me: Driver, input: { throttle: number; turn: number; b
   if (brake && !me.braking) me.brakeWindow = 0.25;
   me.braking = brake;
   me.slide = Math.max(0, (me.slide ?? 0) - dt);
-  if (me.brakeWindow > 0 && me.v > 7 && Math.abs(turn) > 0.15 && !stunned) {
-    me.slide = 1.6;
+  // Wet ground breaks loose on its own: a hard enough turn slips it without a
+  // brake tap at all, and the sharper the turn needs to be normally, the less
+  // rain it takes to bring that bar down.
+  const wetSlip = !stunned && rain > 0 && me.v > 9 && Math.abs(turn) > 0.6 - rain * 0.15;
+  if (!stunned && ((me.brakeWindow > 0 && me.v > 7 && Math.abs(turn) > 0.15) || wetSlip)) {
+    me.slide = 1.6 + rain * 1.1;
     me.brakeWindow = 0;
   }
   if (stunned || me.v < 5 || Math.abs(turn) < 0.1) me.slide = 0;
@@ -51,7 +56,9 @@ export function stepDrive(me: Driver, input: { throttle: number; turn: number; b
   const target = stunned ? 0 : input.tow;
   me.draft = (me.draft ?? 0) + (target - (me.draft ?? 0)) * (1 - Math.exp(-dt / (target > (me.draft ?? 0) ? 0.8 : 3)));
   const boost = me.draft * road;
-  const drag = (5.5 + 1.9 * grass - 2.25 * road + me.driftGrip * 0.25 + me.brakePressure * 5 - boost * 0.7) * (stunned ? 3 : 1);
+  // Wet grass clings to the deck a little; wet tarmac does not, so it takes
+  // the grip term instead, below.
+  const drag = (5.5 + 1.9 * grass - 2.25 * road + me.driftGrip * 0.25 + me.brakePressure * 5 - boost * 0.7 + rain * grass * 0.8) * (stunned ? 3 : 1);
   const accel = (62 + 6 * road) * (1 + boost * 0.8);
   const decay = Math.exp(-drag * dt);
   me.v = me.v * decay + throttle * (1 - me.brakePressure) * accel / drag * (1 - decay);
@@ -59,7 +66,9 @@ export function stepDrive(me: Driver, input: { throttle: number; turn: number; b
   me.v = Math.max(-6.5, Math.min(MAX_SPEED, me.v));
   const limit = 13 + (ROAD_SPEED - 13) * road + 8 * boost;
   if (me.v > limit) me.v = limit + (me.v - limit) * Math.exp(-dt * 7);
-  const grip = 14 + road * (18 + me.driftGrip * 16);
+  // Grip caps how fast a Mower can turn its heading, below; wet ground gives
+  // the tyres less to bite into, so the cap comes down and steering goes soft.
+  const grip = (14 + road * (18 + me.driftGrip * 16)) * (1 - rain * 0.3);
   const ask = turn * 3 * Math.min(1, 0.25 + Math.abs(me.v) / 4);
   const hold = grip / Math.max(0.01, Math.abs(me.v));
   me.travel ??= me.a;

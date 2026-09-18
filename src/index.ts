@@ -1,6 +1,7 @@
 import { treeAt, treeEarthAt } from "./trees";
 import { roadDistance, roadCentre, ROAD_HALF_WIDTH } from "./road";
 import { MAX_SPEED } from "./driving";
+import { effectiveElapsedMs } from "./weather";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
 import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { DurableObject } from "cloudflare:workers";
@@ -244,9 +245,14 @@ const FIELD_NEARLY = 95;
  * How tall the grass on a Tile stands, from 0 to 1. A Tile nobody ever mowed
  * is fully overgrown. Mirrors `heightAt` in the client, which is what makes
  * the score the server counts the same score the Mower watches.
+ *
+ * Age is counted in effective seconds, not wall-clock seconds: a Tile that
+ * sat through Rain has grown as if more time had passed. `effectiveElapsedMs`
+ * works in milliseconds, so both ends of the span are scaled up and its
+ * answer scaled back down.
  */
 function bladeHeight(mownAt: number, regrow: number, now: number): number {
-  const age = mownAt === 0 ? cycle(regrow) : now - mownAt;
+  const age = mownAt === 0 ? cycle(regrow) : effectiveElapsedMs(mownAt * 1000, now * 1000) / 1000;
   if (age >= cycle(regrow)) return 1;
   if (!(age > COOLDOWN_SECONDS) || !(regrow > 0)) return 0;
   const t = (age - COOLDOWN_SECONDS) / regrow;
