@@ -1169,6 +1169,13 @@ it always was.
 - `scripts/check-achievements.mjs` — reads that table and says whether it holds
   together: one bit each, every Achievement reachable, none of them earned by a
   Mower that has done nothing, and the nine Field names the same as the map's.
+- `scripts/check-lawn.mjs` — the parts of the Lawn that move without being
+  asked, driven through the real Session over a Durable Object that is a Map: a
+  Field crowning whoever stood in it, a Lawn waking beside a finished Field and
+  crowning nobody, a Bump the Lawn saw and one it did not, a reload that is not
+  a goodbye, and the board going to disk and coming back. A Mow Stroke answers
+  for itself; none of these do, so nothing found the Ball's own clock broken
+  until somebody played the game. `check-ball.mjs` now watches that clock too.
 - `src/worker.ts` — the Worker: one route, one Lawn.
 - `src/ground/` — the ground itself, as plain functions and tables with no
   Effect in them: `map.ts`, `growth.ts`, `parcels.ts`, `cutting.ts` and

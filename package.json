@@ -5,7 +5,7 @@
   "scripts": {
     "build:achievements": "esbuild src/achievements.ts --bundle --format=esm --outfile=public/achievements.js",
     "build:ball": "esbuild src/ball.ts --bundle --format=esm --minify --outfile=public/ball.js",
-    "build:checks": "esbuild src/ground/map.ts src/ground/cutting.ts src/lawn/testing.ts --bundle --format=esm --platform=node --outdir=.checks",
+    "build:checks": "esbuild src/ground/map.ts src/ground/cutting.ts src/ground/parcels.ts src/lawn/testing.ts --bundle --format=esm --platform=node --outdir=.checks",
     "build:driving": "esbuild src/road.ts src/driving.ts src/positions.ts src/mowing.ts --bundle --format=esm --outdir=public",
     "build:score": "esbuild src/score.js --bundle --format=esm --minify --outfile=public/score.js",
     "build:trees": "esbuild src/trees.ts --bundle --format=esm --outfile=public/trees.js",
@@ -17,6 +17,7 @@
     "test:ball": "npm run build:ball && npm run build:checks && node scripts/check-ball.mjs",
     "test:driving": "npm run build:driving && node scripts/check-driving.mjs",
     "test:junctions": "npm run build:driving && npm run build:trees && npm run build:checks && node scripts/check-junctions.mjs",
+    "test:lawn": "npm run build:driving && npm run build:trees && npm run build:achievements && npm run build:checks && node scripts/check-lawn.mjs",
     "test:map": "npm run build:driving && npm run build:trees && node scripts/check-map.mjs",
     "test:mowing": "npm run build:driving && npm run build:trees && npm run build:checks && node scripts/check-mowing.mjs",
     "test:positions": "npm run build:driving && npm run build:checks && node scripts/check-positions.mjs",

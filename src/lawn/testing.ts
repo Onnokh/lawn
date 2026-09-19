@@ -50,9 +50,13 @@ let ids = 0;
  * built, and nothing may be said to the Lawn until they are. A check that ran
  * before that would be told the Lawn is asleep.
  */
-export const harness = async (options: { readonly flat?: boolean } = {}): Promise<Harness> => {
+export const harness = async (options: {
+  readonly flat?: boolean;
+  /** What is already on the disk, for a check that needs a Lawn with a past. */
+  readonly disk?: Map<string, unknown>;
+} = {}): Promise<Harness> => {
   const sockets: Heard[] = [];
-  const disk = new Map<string, unknown>();
+  const disk = options.disk ?? new Map<string, unknown>();
 
   const storage = {
     get: async (key: string | string[]) =>
