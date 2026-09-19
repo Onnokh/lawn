@@ -19,3 +19,6 @@ public/road.js
 public/driving.js
 public/positions.js
 public/mowing.js
+
+# Server modules built for the checks in scripts/.
+.checks/

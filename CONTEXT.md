@@ -146,8 +146,8 @@ Lawn, and the Fields keep their names and their places.
 There are three readers of that table, and only one writer of it. The client
 and the minimap import `public/fields.js`. The shader is handed its own copy
 of the map as WGSL, built from the same table by that same file. The Lawn
-keeps a mirror in `src/index.ts`, for the same reason it mirrors the Growth
-Rate: it counts the blades, so it has to know which Tiles are grass. That one
+keeps a mirror in `src/ground/map.ts`, for the same reason it mirrors the
+Growth Rate: it counts the blades, so it has to know which Tiles are grass. That one
 copy must stay identical.
 
 Being built from the same table is what keeps the widths and the seams from
@@ -514,7 +514,7 @@ and it is the mildest one the Lawn will ever hand out.
 
 The pictures live on the client, and the Lawn knows only how many there are:
 `EMOTES` in `public/index.html` holds the glyphs and `EMOTE_COUNT` in
-`src/index.ts` is the number the Lawn will relay. A sixth Emote is two edits,
+`src/lawn/limits.ts` is the number the Lawn will relay. A sixth Emote is two edits,
 and one of them without the other is an Emote nobody else can see.
 
 A card in the air, and a card too small is a card nobody reads at
@@ -1060,7 +1060,7 @@ The server can refuse a Mow Stroke when the Mower is over the rate budget
 (`STROKE_RATE` per second), and it can cut less than the Mower asked for when
 the Mower is over its travel budget. Then the two lawns disagree. To correct
 this, the server sends a new Snapshot to that Mower. Keep the mow maths in
-`src/index.ts` and `public/index.html` identical.
+`src/ground/cutting.ts` and `public/index.html` identical.
 
 The client sends a maximum of one Mow Stroke every 100 ms. The Mow Stroke
 covers the full movement since the last one. A fast drag thus cuts a
@@ -1093,6 +1093,58 @@ A phone held sideways is 812 x 390: wide enough to pass a width breakpoint and
 far too short for the layout behind it. The small layout therefore answers to
 both, and the minimap is measured against the height as well as the width.
 
+## The server
+
+The Lawn was one file of sixteen hundred lines: the map, the growth, the
+storage format, the wire, the rate limits, the ball and the whole of the
+Durable Object in one class. Every one of those is a different question, and
+the file gave no answer about which of them a change touched.
+
+It is now three layers, and the line between them is what each one is allowed
+to know.
+
+- **`src/ground/`** knows nothing but arithmetic. The map, the Growth Rate, the
+  Field tables and the cut. No Effect, no services, no state that outlives a
+  call. It is the hot path — a Mow Stroke walks a thousand Tiles — and it is
+  the part a check can pick up and run beside the client's copy.
+- **`src/lawn/`** is the Lawn as a running thing, as Effect services. Each owns
+  one kind of state and nothing else owns it: `tiles.ts` the ground, `scores.ts`
+  the board, `places.ts` where every Mower stands, `budgets.ts` what each may
+  do, `motion.ts` how each is moving, `log.ts` what has lately happened,
+  `ballgame.ts` the Ball, `store.ts` the disk, `alarm.ts` the one alarm. Above
+  them `mower.ts` says how the Lawn talks to one Mower and `session.ts` is the
+  order of the steps — and the order is the domain: a Mow Stroke is spent
+  before it is driven, driven before it is cut, cut before it is counted, and
+  counted before anybody is told.
+- **`src/lawn/lawn.ts`** is the platform's side and nothing else. It holds the
+  runtime and hands each callback to the Session.
+
+Three things about that runtime are load-bearing.
+
+**One runtime per Durable Object, with no memo map shared between them.** Every
+service holds the state of one Lawn. Two Lawns sharing one instance of any of
+them would be two Lawns wearing each other's grass.
+
+**The layers are built inside `blockConcurrencyWhile`.** The Tiles, the board
+and the Ball are read off the disk while the layers are built, so a Mow Stroke
+can never land on a Lawn that is still loading. A check that skips this gets an
+`AsyncFiberError` on its first message, which is the same fault said out loud.
+
+**Socket messages are run with `runSync`, not `runPromise`.** A Mow Stroke is
+only correct in the order it was sent — the swath runs from where the Lawn last
+saw that Mower, so two strokes that overtook each other would cut ground nobody
+drove over. The Durable Object hands them over one at a time and in order, and
+running them synchronously is what keeps that. Nothing is given up for it:
+every step of handling a message is synchronous. Only opening a socket and the
+alarm are promises, because only they touch the disk.
+
+The one thing a Mower says that is not trusted is read by `Schema` in
+`src/lawn/schema.ts`: a tagged union on `t`, with a finite number required
+where a number is required. What used to be a `JSON.parse` and a row of
+`Number.isFinite` calls is now one decode that either answers a message or
+answers nothing, and a message the Lawn cannot read is dropped in silence, as
+it always was.
+
 ## Files
 
 - `public/fields.js` — the map: the seeds, the seams and what each one is
@@ -1106,7 +1158,9 @@ both, and the minimap is measured against the height as well as the width.
 - `scripts/check-junctions.mjs` — walks a third of a million points and proves
   the Lawn's copy of the map answers exactly what the client's does. It is the
   only thing that does, so it is wired into `package.json` as `test:junctions`;
-  it had rotted unnoticed because nothing ran it.
+  it had rotted unnoticed because nothing ran it. It used to cut the map out of
+  the middle of a file by searching for two comments, which is how it rotted;
+  it now imports `src/ground/map.ts`, which either exists or fails loudly.
 - `src/achievements.ts` — the Achievements: the bits, the thresholds, and what
   each one is called. Built to `public/achievements.js` the way `src/ball.ts`
   is built to `public/ball.js`, so the Lawn and the client read one table and
@@ -1115,7 +1169,13 @@ both, and the minimap is measured against the height as well as the width.
 - `scripts/check-achievements.mjs` — reads that table and says whether it holds
   together: one bit each, every Achievement reachable, none of them earned by a
   Mower that has done nothing, and the nine Field names the same as the map's.
-- `src/index.ts` — the Worker (routing) and the `Lawn` Durable Object.
+- `src/worker.ts` — the Worker: one route, one Lawn.
+- `src/ground/` — the ground itself, as plain functions and tables with no
+  Effect in them: `map.ts`, `growth.ts`, `parcels.ts`, `cutting.ts` and
+  `dimensions.ts`. Everything here is read Tile by Tile, many times a second,
+  and everything here is also what a check wants to hold on its own.
+- `src/lawn/` — the Lawn as a Durable Object, one service per concern. See
+  "The server".
 - `public/index.html` — the whole client: WebGPU field, driving, socket, HUD.
   The Lawn is drawn as instanced 3D blades under one sun, from a camera that
   follows the Mower's position at a fixed heading. A rotating camera was tried

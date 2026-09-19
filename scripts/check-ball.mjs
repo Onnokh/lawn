@@ -51,4 +51,44 @@ const gentle = createBall(100,100);
 hitBall(gentle,{id:'slow',x:97,y:100,vx:2,vy:0},1000);
 assert.ok(gentle.vx < 4 && gentle.vz < 3, 'gentle nudges remain controllable');
 
-console.log('Ball direction, combined lift, gravity, settling, parked contact, height clearance, bounds and banks pass.');
+/**
+ * The Lawn's own clock for the Ball. The physics above is shared with the
+ * client, but only the Lawn decides when to run it: a Mower strikes the Ball,
+ * a clock starts, and it stops itself once the Ball is at rest. A clock that
+ * reads itself the instant it starts finds no time gone by, steps nothing, and
+ * stops on a Ball that was just struck — so this drives at the Ball and says
+ * whether it actually rolled.
+ */
+const { harness } = await import('../.checks/lawn/testing.js');
+{
+  const lawn = await harness();
+  const driver = lawn.join({id:'driver'});
+  const watcher = lawn.join({id:'watcher'});
+  const bx = 408/2 + 7, by = 272/2;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  // Two reports 100 ms apart: one report says where, two say how fast.
+  lawn.say(driver,{t:'mow',x:bx-6,y:by,a:0,seq:1});
+  await wait(100);
+  lawn.say(driver,{t:'mow',x:bx-2.5,y:by,a:0,seq:2});
+  await wait(400);
+  const balls = watcher.said.filter(m => m.t === 'ball');
+  assert.ok(balls.length > 2, `a struck Ball is broadcast as it rolls, not once: got ${balls.length}`);
+  assert.ok(balls.at(-1).x - bx > 5, 'a struck Ball travels away from the Mower');
+  assert.ok(balls.at(-1).vx > 0, 'and it is still carrying the speed it was given');
+}
+{
+  // A Mower that only rolls up to the Ball does not start the clock.
+  const lawn = await harness();
+  const driver = lawn.join({id:'driver'});
+  const watcher = lawn.join({id:'watcher'});
+  const bx = 408/2 + 7, by = 272/2;
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  lawn.say(driver,{t:'mow',x:bx-2.51,y:by,a:0,seq:1});
+  await wait(100);
+  lawn.say(driver,{t:'mow',x:bx-2.5,y:by,a:0,seq:2});
+  await wait(200);
+  assert.equal(watcher.said.filter(m => m.t === 'ball').length, 0,
+    'a Ball nobody struck costs the Lawn nothing');
+}
+
+console.log('Ball direction, combined lift, gravity, settling, parked contact, height clearance, bounds, banks and the Lawn\'s clock pass.');

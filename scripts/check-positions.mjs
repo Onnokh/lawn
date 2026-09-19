@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { build } from 'esbuild';
 import { motion, addReport, samplePeer, PositionReports, INTERP_DELAY, PREDICT_MS } from '../public/positions.js';
 import { slipstream } from '../public/driving.js';
 
@@ -112,48 +111,41 @@ frameNow+=110;
 vm.runInContext('drive(1/60,1220)',driving);
 assert.equal(packets.length,2,'idle frames keep the existing traffic budget');
 
-// Run the real server message handler and speed limiter with in-memory sockets.
-const bundled = await build({entryPoints:['src/index.ts'],bundle:true,write:false,format:'esm',platform:'node',
-  plugins:[{name:'workers-test', setup(b) {
-    b.onResolve({filter:/^cloudflare:workers$/}, () => ({path:'workers',namespace:'test'}));
-    b.onLoad({filter:/.*/,namespace:'test'}, () => ({contents:'export class DurableObject {}'}));
-  }}]});
-const { Lawn } = await import('data:text/javascript;base64,' + Buffer.from(bundled.outputFiles[0].text).toString('base64'));
-function lawn() {
-  const game = Object.create(Lawn.prototype);
-  Object.assign(game, {places:new WeakMap(),travelBudgets:new Map(),budgets:new WeakMap(),scores:new Map(),strokes:0,
-    trackBallMower(){},tell(){},schedulePersist(){},watchFields(){},mow(){return 0;},resync(){},
-    messages:[],broadcast(raw){this.messages.push(JSON.parse(raw));}});
-  return game;
-}
+// Run the real server message handler and speed limiter on a Lawn whose
+// Durable Object is a Map and whose ground is flat: how fast a Mower may drive
+// is not a question about where the water is.
+const { harness } = await import('../.checks/lawn/testing.js');
 let now = 10000;
 const dateNow = Date.now;
 Date.now = () => now;
 try {
-  const game = lawn(), accepted = [];
-  const socket = {deserializeAttachment:()=>({id:'driver'}),send:raw=>accepted.push(JSON.parse(raw))};
-  // Isolate the travel budget from terrain; map and bank behavior have separate checks.
-  game.dryRun = (_from,_ux,_uy,distance) => distance;
-  const send = (seq,x,vx=25) => game.webSocketMessage(socket,JSON.stringify({t:'mow',x,y:100,a:0,vx,vy:0,seq}));
+  const lawn = await harness({flat:true});
+  // A Mower to drive, and one to watch it. A broadcast never goes back to the
+  // Mower it is about, so without a second socket there is nothing to read.
+  const driver = lawn.join({id:'driver'});
+  const watcher = lawn.join({id:'watcher'});
+  const accepted = () => driver.said.filter(m=>m.t==='accepted').at(-1);
+  const peer = () => watcher.said.filter(m=>m.t==='peer').at(-1);
+  const send = (seq,x,vx=25) => lawn.say(driver,{t:'mow',x,y:100,a:0,vx,vy:0,seq});
   send(1,100);
-  assert.equal(game.messages.at(-1).t,'peer','first report establishes presence immediately');
+  assert.equal(peer()?.id,'driver','first report establishes presence immediately');
   for (let i=1;i<=20;i++) {
     now += 100;
     send(i+1,100+i*2.5);
-    assert.equal(accepted.at(-1).x,100+i*2.5,'server accepts sustained maximum boost speed');
-    assert.equal(game.messages.at(-1).vx,25);
+    assert.equal(accepted().x,100+i*2.5,'server accepts sustained maximum boost speed');
+    assert.equal(peer().vx,25);
   }
   now += 100;
   send(22,200);
-  const correction = accepted.at(-1), peer = game.messages.at(-1);
+  const correction = accepted(), seen = peer();
   assert.ok(correction.x < 200,'speed violation is limited');
-  assert.equal(correction.x,peer.x,'driver and observers receive identical accepted position');
-  assert.equal(peer.vx,0,'rejected travel is not extrapolated');
+  assert.equal(correction.x,seen.x,'driver and observers receive identical accepted position');
+  assert.equal(seen.vx,0,'rejected travel is not extrapolated');
   now += 100;
   send(23,correction.x,0);
-  assert.equal(game.messages.at(-1).vx,0,'stop is explicitly broadcast');
+  assert.equal(peer().vx,0,'stop is explicitly broadcast');
   now += 100;
-  game.webSocketMessage(socket,JSON.stringify({t:'mow',x:correction.x,y:100,a:0}));
-  assert.equal(game.messages.at(-1).t,'peer','old clients can still report');
+  lawn.say(driver,{t:'mow',x:correction.x,y:100,a:0});
+  assert.equal(watcher.said.at(-1).t,'peer','old clients can still report');
 } finally { Date.now = dateNow; }
 console.log('Position prediction, jitter at 30/60/120Hz, drafting, stops, drift, stale peers, bounds, acknowledgements and server boost limits pass.');

@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "lawn",
-  "main": "src/index.ts",
+  "main": "src/worker.ts",
   "compatibility_date": "2025-09-01",
   "assets": { "directory": "public", "binding": "ASSETS" },
   "durable_objects": {

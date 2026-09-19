@@ -1,33 +1,21 @@
-/** Client/server agreement and shoreline continuity around every junction. */
+/**
+ * Client/server agreement and shoreline continuity around every junction.
+ *
+ * The Lawn holds its own copy of the map, in `src/ground/map.ts`, and the
+ * client holds another in `public/fields.js`. The two have to agree about
+ * every point of the Lawn, or a score counts blades that were never there.
+ * This walks both and compares them point for point.
+ */
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
-import ts from 'typescript';
 import { placeAt } from '../public/fields.js';
-import { treeEarthAt } from '../public/trees.js';
-import { ringDistance, STREET_HALF_WIDTH } from '../public/road.js';
+import { placeAt as serverPlaceAt } from '../.checks/ground/map.js';
 
-const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
-const start = source.indexOf('const SEEDS:');
-// The slice must end at the last thing the map is made of. It used to end at
-// a comment that has since been deleted, which quietly made the slice the
-// whole file — `export class Lawn` is not something `vm` will run, so this
-// check threw instead of checking. It is in `package.json` now so it cannot
-// rot unnoticed again.
-const end = source.indexOf('/** Water and trunks stop', start);
-assert.ok(start >= 0 && end > start, 'cannot find the map in src/index.ts');
-// The Lawn's own `placeAt` asks the trees where the bare earth is, so the
-// sandbox is handed the same answer the client uses. Anything the map depends
-// on has to come in here, or this check tests a map that is not the map.
-const server = vm.runInNewContext(ts.transpile(source.slice(start, end) + '\nplaceAt;', {
-  target: ts.ScriptTarget.ES2022,
-}), { treeEarthAt, ringDistance, STREET_HALF_WIDTH });
 let checked = 0;
 for (const [width, height] of [[408, 272], [288, 192]]) {
   for (let y = 1; y < height - 1; y += 0.7) {
     for (let x = 1; x < width - 1; x += 0.7) {
       const client = placeAt(x, y, width, height);
-      const authority = server(x, y, width, height);
+      const authority = serverPlaceAt(x, y, width, height);
       assert.equal(client.field, authority.field);
       assert.equal(client.wet, authority.wet);
       assert.equal(client.street, authority.street);

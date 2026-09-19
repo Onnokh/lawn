@@ -3,24 +3,19 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { transform } from 'esbuild';
 import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '../public/mowing.js';
+import { cutSwath } from '../.checks/ground/cutting.js';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const server = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 const W = 408, H = 272;
 const client = vm.createContext({ Date, Math, performance, W, H, RADIUS:MOW_RADIUS, forEachMownTile,
   mownAt:new Float64Array(W*H), mowDir:new Float32Array(W*H), clockOffset:0, settling:new Map(),
   heightAt:()=>1, paintDir(){}, fieldDirty:false, onGrass:()=>true, bladesCut:0,
   mowerSound:{cut(){}}, throwClippings(){} });
 vm.runInContext(html.slice(html.indexOf('function cut('),html.indexOf('/* ---- the shared lawn')), client);
-const start = server.indexOf('  private mow(');
-const end = server.indexOf('\n  /**',start);
-const compiled = await transform('class Test { '+server.slice(start,end)+' }\nglobalThis.Test = Test;',{loader:'ts'});
-const backend = vm.createContext({ Date, Math, LAWN_WIDTH:W, LAWN_HEIGHT:H, MOW_RADIUS, forEachMownTile,
-  FIELD_OF:new Uint8Array(W*H), NO_FIELD:255, REGROW:new Float64Array(W*H), bladeHeight:()=>1 });
-vm.runInContext(compiled.code,backend);
-const game = new backend.Test();
-game.mownAt = new Uint32Array(W*H);
-game.cutByField = new Float64Array(9);
+// The Lawn cuts the real swath, on ground that is all grass and all alike:
+// what a swath touches is geometry, and this is a check of the geometry.
+const ground = { mownAt:new Uint32Array(W*H), fieldOf:new Uint8Array(W*H),
+  regrow:new Float32Array(W*H).fill(7200), byField:new Float64Array(9), bare:255 };
 const changed = array => Array.from(array.keys()).filter(i=>array[i]>0);
 
 // Extract the housing vertices from the real model, not a duplicate drawing.
@@ -52,14 +47,16 @@ const strokes = [[100,100,100.1,100],[100,100,102.5,100],[100,100,97.5,100],
   [100,100,100,102.5],[100.37,100.82,102.13,102.58],[0,0,2,1],[407,271,408,272]];
 for(const stroke of strokes) {
   client.mownAt.fill(0); client.bladesCut=0; client.settling.clear();
-  game.mownAt.fill(0);
+  ground.mownAt.fill(0);
   client.cut(...stroke,0,true);
-  const score=game.mow(...stroke);
+  // A Tile nobody ever mowed is fully overgrown, so every Tile the swath
+  // touches gives up exactly one blade and the sum is the tile count.
+  const score=cutSwath(ground,...stroke,Math.floor(Date.now()/1000));
   const local=changed(client.mownAt);
-  assert.deepEqual(local,changed(game.mownAt),'optimistic cut and server cut touch identical tiles');
+  assert.deepEqual(local,changed(ground.mownAt),'optimistic cut and server cut touch identical tiles');
   assert.equal(score,local.length);
   assert.equal(client.bladesCut,score);
-  assert.equal(game.cutByField[0],score);
+  assert.equal(ground.byField[0],score);
   const [x0,y0,x1,y1]=stroke,dx=x1-x0,dy=y1-y0,len2=dx*dx+dy*dy;
   for(const i of local) {
     const x=i%W+0.5,y=Math.floor(i/W)+0.5;
