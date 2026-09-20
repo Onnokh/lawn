@@ -91,7 +91,7 @@ const driving = vm.createContext({Math, Date, performance:{now:()=>frameNow},
   roadAt:()=>1, bite:()=>0, slipstream:()=>0, touchBrake:false,
   stepDrive:()=>({vx:25,vy:0,drifting:false}), reducedMotion:{matches:false},
   leanBody(){},angleGap:()=>0,moveMower(dx,dy){order.push('drive');this.me.x+=dx;this.me.y+=dy;},
-  drivePace:{},driveMode:{},draftMeter:{},ease:(_from,to)=>to,DRIFT_TAU:0.1,
+  ease:(_from,to)=>to,DRIFT_TAU:0.1,
   cut(){},positionSavedAt:1000,savePosition(){}, connected:true,sendAt:0,
   sentX:null,sentY:null,sentA:null,sentMoving:false,reportMotion:motion,
   positionReports:new PositionReports(),send:m=>packets.push(m),mowerCount:0,showMowerCount(){}

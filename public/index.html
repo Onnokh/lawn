@@ -7,7 +7,7 @@
 <meta name="description" content="One shared lawn for everybody. Drive the mower, cut the grass. It grows back whether you are here or not." />
 <style>
   * { box-sizing: border-box; }
-  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-top: env(safe-area-inset-top, 0px); }
+  :root { --safe-bottom: env(safe-area-inset-bottom, 0px); --safe-top: env(safe-area-inset-top, 0px); --safe-left: env(safe-area-inset-left, 0px); --safe-right: env(safe-area-inset-right, 0px); }
   html, body { height: 100%; margin: 0; }
   body {
     background: #cbdcc2;
@@ -80,15 +80,7 @@
        window nobody tried. */
     --score-floor: calc(38px + var(--safe-bottom) + clamp(24px, 3.1vw, 42px) + 30px);
   }
-  body.touch {
-    --keys-height: 0px;
-    /* What the bottom of a touch screen has already spoken for: the stick
-       zone on the left, and the column of buttons standing over the map on
-       the right. Whichever reaches higher is the floor, because a card below
-       it is a card under a thumb. The column is three 52px buttons and two
-       10px gaps over the 12px it sits off the map. */
-    --thumb-floor: max(min(42dvh, 330px), calc(var(--map-top, 150px) + 188px));
-  }
+  body.touch { --keys-height: 0px; }
   #keys {
     /* One row, on the middle of the map. The map's right edge stands at the
        same 16px margin the map is drawn with and its left edge is
@@ -143,7 +135,6 @@
     /* The bottom left is the stick on a thumb screen, so the log stands above
        everything the thumbs have claimed and keeps fewer lines. */
     #log { left: 10px; width: min(66vw, 320px); font-size: 11.5px; }
-    body.touch #log { bottom: calc(var(--thumb-floor) + 10px); }
   }
   @media (prefers-reduced-motion: reduce) {
     .log-line { animation: none; }
@@ -445,10 +436,6 @@
     text-shadow: 0 1px 3px #14200e;
   }
   #award-toast.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
-  /* A thumb drives from the bottom of the screen, so the card stands off it.
-     This holds on a tablet too, where the window is wide enough to keep the
-     rest of the large layout. */
-  body.touch #award-toast { bottom: calc(var(--thumb-floor) + 10px); }
   /* The ring that leaves the card the moment it lands. It is a box-shadow and
      not a child, so `overflow: hidden` clips the sweep without clipping it. */
   #award-toast.visible { animation: award-ring 1s cubic-bezier(.2, .8, .3, 1); }
@@ -480,15 +467,10 @@
 
   /* ------------------------------------------------------------------ *
    * touch controls
-   * A thumb gets one stick and two buttons, and nothing else on a phone
+   * A thumb gets one stick and a compact action group. Nothing else on a phone
    * may sit where the thumbs land: the bottom left and the bottom right.
    * ------------------------------------------------------------------ */
-  #drive-status { position: fixed; bottom: calc(18px + var(--safe-bottom, 0px)); left: 50%; transform: translateX(-50%); z-index: 5; display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-radius: 18px; background: #203321d9; color: #f2e5be; font: 12px system-ui; pointer-events: none; }
-  #drive-pace { font-variant-numeric: tabular-nums; min-width: 58px; }
-  #draft-meter { width: 44px; height: 8px; accent-color: #e4c773; }
   #brake-btn { font: 600 12px system-ui; touch-action: none; }
-  body.touch #drive-status { bottom: calc(90px + var(--safe-bottom, 0px)); }
-  @media (max-width: 600px) { #drive-status { gap: 7px; padding: 7px 10px; } #draft-meter { width: 28px; } }
   #touch-ui { display: none; }
   body.touch #touch-ui { display: block; }
   #stick-zone {
@@ -530,7 +512,7 @@
     box-shadow: 0 4px 16px rgba(11,18,8,.4);
     touch-action: manipulation; -webkit-tap-highlight-color: transparent;
   }
-  .touch-btn:active { transform: scale(.94); }
+  .touch-btn:active { transform: scale(.96); }
   .touch-btn[aria-pressed="true"], .touch-btn[aria-expanded="true"] {
     background: rgba(53,79,37,.88); border-color: rgba(232,205,128,.55);
   }
@@ -544,13 +526,6 @@
   #emote-row .touch-btn:nth-child(5) { animation-delay: .16s; }
   @keyframes emote-pop { from { transform: scale(.2); opacity: 0; } }
   body.touch #board, body.touch #awards { pointer-events: auto; }
-  /* A thumb screen keeps a column of buttons down the right. The window stands
-     in what is left of the width rather than centred under them, or the count
-     on the end of every bar reads from behind a button. */
-  body.touch #awards {
-    left: 10px; right: calc(84px + var(--safe-right, 0px)); width: auto;
-    transform: translateY(-50%);
-  }
   #awards-list { pointer-events: auto; }
 
   @media (max-width: 700px), (max-height: 560px) and (max-width: 1000px) {
@@ -708,6 +683,91 @@
   #log.collapsed #log-lines { display: none; }
   #log.collapsed { width: 28px; }
   @media (hover: none) { #log-toggle { opacity: 1; } }
+  .panel-close {
+    position: absolute; top: 8px; right: 8px; width: 44px; height: 44px;
+    border: 0; border-radius: 50%; background: #102719; color: #f4e7b6;
+    font: 24px/1 system-ui; cursor: pointer; pointer-events: auto; touch-action: manipulation;
+  }
+  #panel-shade { position: fixed; inset: 0; z-index: 30; background: #07120bbb; }
+  #panel-shade[hidden] { display: none; }
+  #board, #awards { z-index: 31; }
+  #board > .quest-label { padding-right: 30px; }
+  #board-list { overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+  #awards-list { touch-action: pan-y; }
+  button:focus-visible { outline: 2px solid #f4d56e; outline-offset: 3px; }
+
+  /* Touch layout: a compact header, expandable information, and two thumb zones. */
+  body.touch { --thumb-floor: calc(156px + var(--safe-bottom)); --utility-top: calc(116px + var(--safe-top)); }
+  body.touch #brand { top: calc(10px + var(--safe-top)); left: calc(12px + var(--safe-left)); transform: none; font-size: 22px; }
+  body.touch #sound-toggle { top: calc(8px + var(--safe-top)); left: auto; right: calc(12px + var(--safe-right)); }
+  body.touch #score { top: calc(58px + var(--safe-top)); bottom: auto; left: calc(12px + var(--safe-left));
+    transform: none; width: max-content; max-width: calc(100% - 24px - var(--safe-left) - var(--safe-right));
+    display: flex; flex-direction: row-reverse; align-items: baseline; gap: 10px;
+    font-size: clamp(20px, 5vw, 25px); text-align: left; overflow: hidden; }
+  body.touch #mower-count { margin-bottom: 0; font-size: 10px; text-align: left; }
+  body.touch #help { top: calc(92px + var(--safe-top)); width: calc(100% - 24px - var(--safe-left) - var(--safe-right));
+    max-width: 560px; font-size: 11px; line-height: 1.4; letter-spacing: 0; }
+  body.touch #credit { display: none; }
+  body.touch #world-quests { top: var(--utility-top); right: calc(12px + var(--safe-right));
+    width: min(260px, calc(100% - 132px - var(--safe-left) - var(--safe-right)));
+    max-height: max(100px, calc(100dvh - var(--utility-top) - var(--thumb-floor) - 16px)); }
+  body.touch #world-quests h2 { height: 44px; flex-shrink: 0; padding-left: 10px; background: #162d20e8;
+    border: 1px solid #c5ad6255; border-radius: 12px; font: 13px/1.3 Georgia, serif; }
+  body.touch #quest-toggle { min-height: 44px; }
+  body.touch #world-quests::before { display: none; }
+  body.touch #world-quest-list { margin-top: 6px; padding: 0 8px 6px; border-radius: 10px; background: #162d20e8; }
+  body.touch #world-quests.collapsed #world-quest-list { display: none; }
+  body.touch .world-quest { padding-top: 7px; padding-bottom: 7px; }
+  body.touch .world-quest-title { font-size: 12px; }
+  body.touch #map-controls { top: var(--utility-top); left: calc(64px + var(--safe-left)); right: auto;
+    bottom: auto !important; width: 44px !important; height: 44px !important; z-index: 16; }
+  body.touch #map-location { display: none; }
+  body.touch #map-toggle, body.touch #map-controls.collapsed #map-toggle {
+    position: static; width: 44px; height: 44px; opacity: 1; border-radius: 12px; font: 11px system-ui; }
+  body.touch #log, body.touch #log.collapsed { top: var(--utility-top); bottom: auto; left: calc(12px + var(--safe-left));
+    width: 44px; min-height: 44px; padding: 0; z-index: 17; }
+  body.touch #log-toggle { width: 44px; height: 44px; opacity: 1; border-radius: 12px; font: 11px system-ui; }
+  body.touch #log-lines { position: absolute; top: 52px; left: 0; width: min(360px, calc(100vw - 24px - var(--safe-left) - var(--safe-right)));
+    max-height: max(80px, calc(100dvh - var(--utility-top) - var(--thumb-floor) - 70px));
+    overflow-y: auto; overscroll-behavior: contain; padding: 12px; border-radius: 12px; background: #102719f5;
+    font-size: 12px; touch-action: pan-y; }
+  body.touch.log-open #world-quests, body.touch.mobile-map-open #world-quests, body.touch.emotes-open #world-quests { visibility: hidden; }
+  body.touch #stick-zone { left: var(--safe-left); bottom: var(--safe-bottom); width: min(46vw, 190px); height: 156px; }
+  body.touch #stick { width: 112px; height: 112px; bottom: 76px; }
+  body.touch #stick-knob { width: 48px; height: 48px; margin: -24px 0 0 -24px; }
+  body.touch #touch-actions { right: calc(12px + var(--safe-right)); bottom: calc(20px + var(--safe-bottom));
+    display: grid; grid-template-columns: repeat(2, 52px); gap: 10px; }
+  body.touch .touch-action-row { position: static; }
+  body.touch #emote-row { position: absolute; right: 0; bottom: calc(100% + 12px); gap: 6px;
+    padding: 8px; border-radius: 16px; background: #102719f5; }
+  body.touch #emote-row .touch-btn { width: 44px; height: 44px; font-size: 23px; animation: none; }
+  body.touch #field-banner { top: calc(var(--utility-top) + 50px); width: min(88vw, 420px); }
+  body.touch #award-toast { top: calc(var(--utility-top) + 52px); bottom: auto; width: min(94vw, 440px); }
+  body.touch:has(#award-toast.visible) #field-banner, body.touch:has(#award-toast.visible) #world-quests { visibility: hidden; }
+  body.touch #board, body.touch #awards {
+    inset: calc(12px + var(--safe-top)) calc(12px + var(--safe-right)) calc(12px + var(--safe-bottom)) calc(12px + var(--safe-left));
+    width: auto; min-width: 0; max-width: 560px; height: auto; max-height: none; aspect-ratio: auto;
+    margin: auto; transform: none; padding: 20px 16px 16px; border: 1px solid #c5ad6266;
+    border-radius: 18px; background: #142d20; display: flex; flex-direction: column; }
+  body.touch #board[hidden], body.touch #awards[hidden] { display: none; }
+  body.touch #board > .quest-label, body.touch #awards > .quest-label {
+    flex: none; min-height: 32px; margin: 0 40px 12px 0; padding: 0; text-align: left; font-size: 15px; letter-spacing: .03em; }
+  body.touch #board-list, body.touch #awards-list { min-height: 0; max-height: none; flex: 1; overflow-y: auto; }
+  body.touch #board-list li { gap: 10px; }
+  body.touch #board-list .board-name { overflow-wrap: anywhere; }
+  body.touch.panel-open #touch-ui { visibility: hidden; }
+  body.touch.panel-open #field-banner, body.touch.panel-open #award-toast { visibility: hidden; }
+  @media (max-height: 560px) and (min-width: 500px) {
+    body.touch { --utility-top: calc(64px + var(--safe-top)); --thumb-floor: calc(136px + var(--safe-bottom)); }
+    body.touch #score { top: calc(10px + var(--safe-top)); left: 50%; transform: translateX(-50%); width: 170px; text-align: center; font-size: 24px; }
+    body.touch #mower-count { text-align: center; }
+    body.touch #help { display: none; }
+    body.touch #stick-zone { height: 136px; width: 156px; }
+    body.touch #stick { width: 100px; height: 100px; bottom: 66px; }
+    body.touch #world-quests { width: 220px; }
+    body.touch #field-banner { top: calc(60px + var(--safe-top)); width: min(42vw, 300px); }
+    body.touch #award-toast { top: auto; bottom: calc(64px + var(--safe-bottom)); width: min(44vw, 320px); }
+  }
 </style>
 </head>
 <body>
@@ -724,7 +784,6 @@
   <span><kbd>Tab</kbd>Score</span>
 </div>
 <div id="help">W A S D or arrows to drive · Space to brake, tap while turning to drift · follow a mower on the road for a slipstream · E emotes · Q achievements · M map · Tab board</div>
-<div id="drive-status" aria-label="Driving status"><span id="drive-pace">0</span><span id="drive-mode">Mowing</span><meter id="draft-meter" min="0" max="1" value="0" aria-label="Slipstream strength"></meter></div>
 <aside id="world-quests" aria-label="World Quest Tracker">
   <h2><button id="quest-toggle" type="button" aria-expanded="true" aria-controls="world-quest-list">World Quest Tracker<span id="quest-chevron" aria-hidden="true">&#9662;</span></button></h2>
   <div id="world-quest-summary"><span id="world-quest-here"></span><span id="world-quest-done">0 / 6 completed</span></div>
@@ -734,11 +793,14 @@
   <img id="field-banner-art" src="/assets/field-entry-banner.png" width="2172" height="724" alt="" />
   <div id="field-banner-copy"><div id="field-banner-label" class="quest-label"></div><div id="field-banner-name"></div><div id="field-banner-tally"></div></div>
 </div>
+<div id="panel-shade" hidden></div>
 <aside id="board" hidden aria-label="Mowers on the Lawn">
+  <button class="panel-close" type="button" aria-label="Close leaderboard">×</button>
   <span class="quest-label">On the Lawn &middot; this visit</span>
   <ol id="board-list"></ol>
 </aside>
 <aside id="awards" hidden aria-label="Achievements">
+  <button class="panel-close" type="button" aria-label="Close achievements">×</button>
   <span class="quest-label">Achievements &middot; <span id="awards-count"></span></span>
   <ol id="awards-list"></ol>
 </aside>
@@ -808,9 +870,11 @@ const minimapOpening = new Image();
 minimapOpening.src = '/assets/minimap-opening.png';
 const minimapCanvas = document.createElement('canvas');
 /** The notch inset. JS cannot ask env() for it, so it is read back from CSS. */
-let safeBottom = 0;
+let safeBottom = 0, safeTop = 0;
 function readSafeArea() {
-  safeBottom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--safe-bottom")) || 0;
+  const style = getComputedStyle(document.documentElement);
+  safeBottom = parseFloat(style.getPropertyValue("--safe-bottom")) || 0;
+  safeTop = parseFloat(style.getPropertyValue("--safe-top")) || 0;
 }
 readSafeArea();
 addEventListener("resize", readSafeArea);
@@ -1028,9 +1092,6 @@ document.addEventListener("visibilitychange", () => {
 });
 
 const MAX_V = ROAD_SPEED;
-const drivePace = document.getElementById('drive-pace');
-const driveMode = document.getElementById('drive-mode');
-const draftMeter = document.getElementById('draft-meter');
 let touchBrake = false;
 /**
  * How a Mower wears its weight. A machine under power lifts its nose, a
@@ -1395,6 +1456,11 @@ function showMap(open) {
 addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === ' ' && e.target.closest?.('button, input, textarea, select, [contenteditable="true"]')) return;
+  if (document.body.classList.contains('panel-open')) {
+    if (k === 'escape') { closeBoard(); closeAwards(); }
+    if (k === 'tab') { e.preventDefault(); document.querySelector('aside:not([hidden]) .panel-close')?.focus(); }
+    return;
+  }
   keys.add(k);
   if ([" ", "arrowup", "arrowdown", "arrowleft", "arrowright", "tab"].includes(k)) e.preventDefault();
   if (e.repeat) return;
@@ -1474,11 +1540,14 @@ function refreshBoard() {
 }
 
 function openBoard() {
+  closeAwards();
+  showEmoteRow(false);
   boardOpen = true;
   boardAt = performance.now();
   refreshBoard();
   board.hidden = false;
   boardBtn.setAttribute("aria-pressed", "true");
+  openPanel(board);
 }
 
 function closeBoard() {
@@ -1486,6 +1555,7 @@ function closeBoard() {
   boardOpen = false;
   board.hidden = true;
   boardBtn.setAttribute("aria-pressed", "false");
+  closePanel(board, boardBtn);
 }
 
 /**
@@ -1504,11 +1574,17 @@ function closeBoard() {
 const logEl = document.getElementById("log-lines");
 const logPanel = document.getElementById('log');
 const logToggle = document.getElementById('log-toggle');
+function showLog(open) {
+  logPanel.classList.toggle('collapsed', !open);
+  document.body.classList.toggle('log-open', open);
+  logToggle.textContent = document.body.classList.contains('touch') ? 'Log' : open ? '⌄' : '⌃';
+  logToggle.setAttribute('aria-expanded', String(open));
+  logToggle.setAttribute('aria-label', open ? 'Hide activity log' : 'Show activity log');
+}
 logToggle.addEventListener('click', () => {
-  const hidden = logPanel.classList.toggle('collapsed');
-  logToggle.textContent = hidden ? '⌃' : '⌄';
-  logToggle.setAttribute('aria-expanded', String(!hidden));
-  logToggle.setAttribute('aria-label', hidden ? 'Show activity log' : 'Hide activity log');
+  const open = logPanel.classList.contains('collapsed');
+  if (open && document.body.classList.contains('touch')) { setMinimapHidden(true); showEmoteRow(false); }
+  showLog(open);
 });
 /** Lines kept on screen at once. Past this the oldest goes without fanfare. */
 const LOG_KEEP = 7;
@@ -1745,11 +1821,14 @@ function takeAwards(mask) {
 }
 
 function openAwards() {
+  closeBoard();
+  showEmoteRow(false);
   awardsOpen = true;
   awardsAt = performance.now();
   drawAwards();
   awards.hidden = false;
   awardsBtn.setAttribute("aria-pressed", "true");
+  openPanel(awards);
 }
 
 function closeAwards() {
@@ -1757,6 +1836,7 @@ function closeAwards() {
   awardsOpen = false;
   awards.hidden = true;
   awardsBtn.setAttribute("aria-pressed", "false");
+  closePanel(awards, awardsBtn);
 }
 
 drawAwards();
@@ -1838,6 +1918,8 @@ document.addEventListener('visibilitychange', () => {
 const emoteRow = document.getElementById("emote-row");
 
 function showEmoteRow(open) {
+  if (open && document.body.classList.contains('touch')) { showLog(false); setMinimapHidden(true); }
+  document.body.classList.toggle('emotes-open', open);
   emoteRow.hidden = !open;
   emoteBtn.setAttribute("aria-expanded", String(open));
 }
@@ -1852,17 +1934,52 @@ emoteRow.replaceChildren(...EMOTES.map((glyph, i) => {
 }));
 emoteBtn.addEventListener("click", () => showEmoteRow(emoteRow.hidden));
 boardBtn.addEventListener("click", () => (boardOpen ? closeBoard() : openBoard()));
-board.addEventListener("click", closeBoard);
+board.querySelector(".panel-close").addEventListener("click", closeBoard);
 awardsBtn.addEventListener("click", () => (awardsOpen ? closeAwards() : openAwards()));
-awards.addEventListener("click", closeAwards);
+awards.querySelector(".panel-close").addEventListener("click", closeAwards);
 
 /* A coarse pointer gets the controls at once; a laptop with a touchscreen
    gets them the moment a finger lands on it. */
-function useTouch() { document.body.classList.add("touch"); }
-if (matchMedia("(hover: none) and (pointer: coarse)").matches) useTouch();
-addEventListener("touchstart", useTouch, { once: true, passive: true });
-if (matchMedia("(pointer: coarse)").matches) {
-  help.textContent = "Drag the stick to drive · tap Brake while turning to drift · follow mowers on the road to slipstream";
+function useTouch() {
+  if (document.body.classList.contains('touch')) return;
+  document.body.classList.add('touch');
+  help.textContent = 'Drag the stick to steer · tap Brake while turning to drift';
+  showLog(false);
+  // Initial touch detection runs before the map and quest state is created.
+  queueMicrotask(() => {
+    setMinimapHidden(true); questsOpen = false; layoutQuests();
+    if (boardOpen) openPanel(board);
+    else if (awardsOpen) openPanel(awards);
+  });
+}
+if (matchMedia('(hover: none) and (pointer: coarse)').matches) useTouch();
+addEventListener('touchstart', useTouch, { once: true, passive: true });
+
+const panelShade = document.getElementById('panel-shade');
+const panelInert = new Set();
+panelShade.addEventListener('click', () => { closeBoard(); closeAwards(); });
+function openPanel(panel) {
+  if (!document.body.classList.contains('touch')) return;
+  keys.clear(); touchBrake = false; stick.mag = 0;
+  if (stickPointer !== -1) {
+    if (stickZone.hasPointerCapture(stickPointer)) stickZone.releasePointerCapture(stickPointer);
+    dropStick({ pointerId: stickPointer });
+  }
+  panelShade.hidden = false;
+  for (const child of document.body.children) {
+    if (child !== panel && child !== panelShade && !child.inert) { child.inert = true; panelInert.add(child); }
+  }
+  document.body.classList.add('panel-open');
+  panel.setAttribute('role', 'dialog'); panel.setAttribute('aria-modal', 'true');
+  panel.querySelector('.panel-close').focus();
+}
+function closePanel(panel, trigger) {
+  for (const child of panelInert) child.inert = false;
+  panelInert.clear();
+  panel.removeAttribute('aria-modal'); panel.removeAttribute('role');
+  panelShade.hidden = true;
+  document.body.classList.remove('panel-open');
+  if (panel.contains(document.activeElement)) trigger.focus();
 }
 
 /* ---- the tracker folds away where the screen is small ---- */
@@ -1877,9 +1994,10 @@ function layoutQuests() {
   quests.classList.toggle("collapsed", !open);
   questToggle.setAttribute("aria-expanded", String(open));
 }
-compact.addEventListener("change", () => { questsOpen = !compact.matches; layoutQuests(); });
+compact.addEventListener("change", () => { questsOpen = !compact.matches && !document.body.classList.contains('touch'); layoutQuests(); });
 questToggle.addEventListener("click", () => {
   questsOpen = !questsOpen;
+  if (questsOpen && document.body.classList.contains('touch')) { showLog(false); setMinimapHidden(true); showEmoteRow(false); }
   layoutQuests();
 });
 layoutQuests();
@@ -2041,10 +2159,7 @@ function drive(dt, lawnNow) {
 
   const px = me.x, py = me.y;
   moveMower(motion.vx * dt, motion.vy * dt, now);
-  drivePace.textContent = `${Math.round(Math.hypot(me.x - px, me.y - py) * rate)} tiles/s`;
-  driveMode.textContent = stunned ? 'Dazed' : motion.drifting ? 'Drifting' : (held(' ') || touchBrake) ? 'Braking'
-    : me.draft * road > 0.15 ? 'Slipstream' : road > 0.5 ? 'Country road' : 'Mowing';
-  draftMeter.value = me.draft * road;
+
 
   // Where the Mower is really going, which is not always where it is pointed
   // or how hard it is pushing: a Mower held against a bank or another Mower
@@ -4120,23 +4235,33 @@ const mapControls = document.getElementById('map-controls');
 const mapLocation = document.getElementById('map-location');
 const mapToggle = document.getElementById('map-toggle');
 let minimapHidden = false;
+function setMinimapHidden(hidden) {
+  minimapHidden = hidden;
+  const touch = document.body.classList.contains('touch');
+  mapControls.classList.toggle('collapsed', hidden);
+  document.body.classList.toggle('mobile-map-open', touch && !hidden);
+  mapToggle.textContent = touch ? 'Map' : hidden ? '⌃' : '⌄';
+  mapToggle.setAttribute('aria-expanded', String(!hidden));
+  mapToggle.setAttribute('aria-label', hidden ? 'Show minimap' : 'Hide minimap');
+}
 mapToggle.addEventListener('click', () => {
-  minimapHidden = !minimapHidden;
-  mapControls.classList.toggle('collapsed', minimapHidden);
-  mapToggle.textContent = minimapHidden ? '⌃' : '⌄';
-  mapToggle.setAttribute('aria-expanded', String(!minimapHidden));
-  mapToggle.setAttribute('aria-label', minimapHidden ? 'Show minimap' : 'Hide minimap');
+  if (minimapHidden && document.body.classList.contains('touch')) { showLog(false); showEmoteRow(false); }
+  setMinimapHidden(!minimapHidden);
 });
 
 function drawMap(cw, ch, dpr) {
   if (!mapReady()) return;
   // A phone held sideways runs out of height first, so cap against both.
-  const cornerW = Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
+  const touch = document.body.classList.contains('touch');
+  const landscape = touch && innerHeight <= 560 && innerWidth >= 500;
+  const portraitRoom = Math.max(80, (innerHeight - safeBottom - 340 - safeTop) / 0.75);
+  const cornerW = touch ? Math.min(260, innerWidth - (landscape ? 300 : 24), innerHeight * 0.56, landscape ? Infinity : portraitRoom)
+    : Math.min(300, innerWidth * (compact.matches ? 0.38 : 0.41), innerHeight * 0.56);
   const margin = 16;
   // Clear the home button bar, and the credit line that sits under the map.
-  const floor = margin + safeBottom + (compact.matches ? 18 : 0);
-  const cornerLeft = cw / dpr - cornerW - margin;
-  const cornerTop = ch / dpr - cornerW * 0.75 - floor;
+  const floor = touch ? 164 + safeBottom : margin + safeBottom + (compact.matches ? 18 : 0);
+  const cornerLeft = touch ? (cw / dpr - cornerW) / 2 : cw / dpr - cornerW - margin;
+  const cornerTop = landscape ? (ch / dpr - cornerW * 0.75) / 2 - 10 : ch / dpr - cornerW * 0.75 - floor;
   const fromBottom = Math.round(cornerW * 0.75 + floor), fromRight = Math.round(cornerW + margin);
   if (fromBottom !== mapTop || fromRight !== mapSide) {
     mapTop = fromBottom; mapSide = fromRight;
