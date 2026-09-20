@@ -1,6 +1,19 @@
 import sharp from 'sharp';
 
-const { data, info } = await sharp('public/assets/quest-card.png')
+/**
+ * Cut the minimap frame out of the quest card.
+ *
+ * The card is one piece of painted artwork with a dark green inset in the
+ * middle. The minimap needs two things from it: the frame with the inset made
+ * transparent, so the Lawn can be drawn through it, and a mask of exactly that
+ * opening, so what is drawn is clipped to it. Both come from the one painting,
+ * which is what keeps the hole and the mask the same shape.
+ *
+ * It answers with raw pixels rather than files: `build-assets.mjs` decides what
+ * they are written as.
+ */
+export async function minimapFrame(source = 'art/quest-card.png') {
+const { data, info } = await sharp(source)
   .ensureAlpha().raw().toBuffer({ resolveWithObject: true });
 const { width, height } = info;
 const selected = new Uint8Array(width * height);
@@ -35,6 +48,5 @@ for (let i = 0; i < selected.length; i++) {
   data[i * 4 + 3] = 0;
   mask.fill(255, i * 4, i * 4 + 4);
 }
-await sharp(data, { raw: info }).png().toFile('public/assets/minimap-frame.png');
-await sharp(mask, { raw: info }).png().toFile('public/assets/minimap-opening.png');
-console.log(`Removed ${tail} connected inset pixels; preserved the original artwork.`);
+return { frame: data, opening: mask, info, removed: tail };
+}

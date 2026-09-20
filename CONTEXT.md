@@ -1176,6 +1176,22 @@ it always was.
   a goodbye, and the board going to disk and coming back. A Mow Stroke answers
   for itself; none of these do, so nothing found the Ball's own clock broken
   until somebody played the game. `check-ball.mjs` now watches that clock too.
+- `art/` — the paintings at the size they were made, and the prompts they were
+  made from. Nothing here is served. A frame painted 2172 pixels across is
+  shown 540 wide, and sending the other 1632 to every visitor buys nothing
+  anybody can see.
+- `scripts/build-assets.mjs` — writes each painting into `public/assets/` at
+  twice the widest box it is ever drawn in, as WebP. Twice, so it still looks
+  painted on a retina screen. The alpha stays lossless, because every one of
+  them is a frame with a hole in it and a ragged edge would show against the
+  grass. The minimap frame is the exception that is not made smaller: it is
+  drawn into the big map at 1100 points across, which is more than the painting
+  has. Six paintings, 6.2 MB, come to 204 KB.
+- `scripts/make-minimap-frame.mjs` — cuts the minimap frame and its mask out of
+  one painting, `art/quest-card.png`, by flood-filling the dark green inset.
+  Both come from the one painting, which is what keeps the hole and the mask
+  the same shape. It answers with raw pixels; `build-assets.mjs` decides what
+  they are written as.
 - `src/worker.ts` — the Worker: one route, one Lawn.
 - `src/ground/` — the ground itself, as plain functions and tables with no
   Effect in them: `map.ts`, `growth.ts`, `parcels.ts`, `cutting.ts` and

@@ -22,3 +22,6 @@ public/mowing.js
 
 # Server modules built for the checks in scripts/.
 .checks/
+
+# The artwork the client downloads, built from art/ by `npm run build:assets`.
+public/assets/

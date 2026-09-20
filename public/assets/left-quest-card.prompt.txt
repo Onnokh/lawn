@@ -1,7 +1,0 @@
-Tool: built-in image_gen (imagegen skill)
-Asset: left-quest-card.png
-
-Use case: stylized-concept
-Asset type: production game UI quest card, bottom-left counterpart to a bottom-right minimap, for a cozy lawn-mowing game.
-Primary request: a new compact rectangular 4:3 quest panel with opaque dark forest-green inset, slim carved honey-brown wooden frame and warm gold inner bevel. Match a hand-painted polished fantasy garden UI. A small three-leaf sprig medallion at the TOP RIGHT and tiny daisies with leaves at bottom-left, subtle leaves at remaining corners. Minimal decorations, spacious center, no large protruding crest. Whole frame fully inside image with 2 percent transparent padding. Interior blank and dark, occupying 80 percent width and 75 percent height for live field title at top and cut-progress meter below. Strong simple readable shapes that remain clean at 300 by 225 display pixels. Straight-on, no perspective.
-Constraints: single asset, landscape 4:3. Genuinely transparent alpha outside the frame, opaque green inside. No words, letters, numbers, progress bar or indicators baked into artwork. No screenshot, scene, extra objects, checkerboard, solid backdrop, watermark. This card balances a same-sized minimap on the opposite side of the screen.
