@@ -186,20 +186,36 @@ export const Score = ScoreShape;
  * opens the Score it holds.
  */
 export const StoredScore = Schema.Union([Score, Schema.Number]);
-export const StoredScores = Schema.Array(Schema.Tuple([Schema.String, StoredScore]));
+export const StoredEntry = Schema.Tuple([Schema.String, StoredScore]);
 
-const readScores = Schema.decodeUnknownResult(StoredScores);
+const readEntry = Schema.decodeUnknownResult(StoredEntry);
 
-/** Read the board off the disk, or start a fresh one. */
+/**
+ * Read the board off the disk.
+ *
+ * One record at a time, and on purpose. A record the Lawn cannot read costs
+ * that one Mower its Score; reading the board as a whole would have cost every
+ * Mower theirs, because the next alarm writes back whatever was loaded — so a
+ * single bad row would not just be unread, it would be overwritten, and a
+ * Score is the one thing here that cannot be mown again.
+ *
+ * The Lawn writes every one of these itself, so none of them should be
+ * unreadable. That is the argument for being strict about what is read, and it
+ * is not an argument for betting the board on it.
+ */
 export function readStoredScores(stored: unknown): Map<MowerKey, Score> {
-  const read = readScores(stored);
-  if (Result.isFailure(read)) return new Map();
-  return new Map(
-    read.success.map(([key, held]) => [
+  if (!Array.isArray(stored)) return new Map();
+  const board = new Map<MowerKey, Score>();
+  for (const entry of stored) {
+    const read = readEntry(entry);
+    if (Result.isFailure(read)) continue;
+    const [key, held] = read.success;
+    board.set(
       key as MowerKey,
       typeof held === "number" ? { n: mowerId() as string, c: held } : { ...held },
-    ]),
-  );
+    );
+  }
+  return board;
 }
 
 /** What a Score has done, in the shape the Achievement table reads. */

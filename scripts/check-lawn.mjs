@@ -219,5 +219,46 @@ function sow(mownAt) {
   console.log(`Storage: ${you.s} blades written down and read back on a new Lawn.`);
 }
 
+// ---- One unreadable record does not cost everybody their Score ----------
+
+{
+  // The Lawn writes every record itself, so none of them should be unreadable.
+  // That is the argument for being strict about what is read, and it is not an
+  // argument for betting the board on it: whatever is loaded is what the next
+  // alarm writes back, so a row that is dropped on the way in is a row deleted
+  // on the way out. A Score can be mown again in an afternoon; an Achievement
+  // earned with it cannot be earned twice.
+  const disk = new Map([['scores', [
+    ['good-1', { n: 'Bold Clover', c: 900, a: 7, q: FIELD_NAMES.map(() => 0), d: 120, b: 3 }],
+    ['ancient', 450],                       // the bare number a Score used to be
+    ['broken', { c: 5 }],                   // no name: the Lawn cannot read it
+    ['good-2', { n: 'Quiet Fescue', c: 300 }],
+  ]]]);
+  const lawn = await harness({ flat: true, disk });
+  const ws = lawn.join({ id: 'reader' });
+
+  lawn.say(ws, { t: 'i', k: 'good-1' });
+  const kept = ws.said.find(m => m.t === 'you');
+  assert.equal(kept.s, 900, 'a good record survives a bad one beside it');
+  assert.equal(kept.a, 7, 'and keeps the Achievements it had earned');
+
+  const second = lawn.join({ id: 'reader2' });
+  lawn.say(second, { t: 'i', k: 'ancient' });
+  assert.equal(second.said.find(m => m.t === 'you').s, 450,
+    'a Score written as a bare number still opens');
+
+  const third = lawn.join({ id: 'reader3' });
+  lawn.say(third, { t: 'i', k: 'good-2' });
+  assert.equal(third.said.find(m => m.t === 'you').s, 300, 'and so does the record after the bad one');
+
+  // The unreadable one is gone, and that is the whole of the damage.
+  const fourth = lawn.join({ id: 'reader4' });
+  lawn.say(fourth, { t: 'i', k: 'broken' });
+  const fresh = fourth.said.find(m => m.t === 'you');
+  assert.notEqual(fresh.key, 'broken', 'an unreadable record is not handed back');
+  assert.equal(fresh.s, 0, 'the Mower it belonged to starts again');
+  console.log('Storage: one unreadable record costs one Mower, not the board.');
+}
+
 console.log('\nThe Lawn holds together: Fields crown, Bumps are refereed, the log waits, the board persists.');
 process.exit(0);
