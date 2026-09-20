@@ -835,6 +835,7 @@ import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
 import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
 import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, BRIDGE } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
+const roadAt = streetAt;
 /**
  * A Field has been finished. The tracker says so in the corner, but the
  * reward belongs on the Lawn: the parcel itself lights up, and the Mower
@@ -1281,6 +1282,7 @@ function connect() {
     }
     if (m.t === "hello") {
       W = m.w; H = m.h; RADIUS = m.radius;
+      showMowerCount(Number.isFinite(m.mowers) ? m.mowers : 1);
       regrowMs = buildRegrow(m.regrowMin * 1000, m.regrowMax * 1000, m.patch);
       cooldownMs = m.cooldown * 1000;
       fieldQuests.resize(W, H);
@@ -1358,6 +1360,8 @@ function connect() {
       // A socket has gone. That is presence and not news — a reload does it
       // too — so the Mower is forgotten from the Lawn and nothing is said.
       peers.delete(m.id);
+    } else if (m.t === "mowers") {
+      showMowerCount(Number.isFinite(m.mowers) ? m.mowers : 0);
     } else if (m.t === "gone") {
       // The Lawn has decided that one really did leave.
       if (m.nm) say("left", m.nm, "has gone offline, gone but not forgotten.");
@@ -2145,7 +2149,7 @@ function drive(dt, lawnNow) {
 
   if (stunned) { fwd = 0; turn = 0; }
   const wasV = me.v, wasA = me.a;
-  const onRoad = (x, y) => streetAt(x, y, W, H);
+  const onRoad = (x, y) => roadAt(x, y, W, H);
   const road = onRoad(me.x, me.y);
   const motion = stepDrive(me, { throttle: fwd, turn, brake: held(' ') || touchBrake,
     road, grass: bite(lawnNow), tow: slipstream(me, peers.values(), now, onRoad), stunned }, dt);
@@ -3636,7 +3640,7 @@ const slipParticles = [];
 
 function drawSlipstream(cw, ch, dpr) {
   const now = performance.now();
-  const strength = (me.draft ?? 0) * streetAt(me.x, me.y, W, H);
+  const strength = (me.draft ?? 0) * roadAt(me.x, me.y, W, H);
   if (strength > 0.08 && !reducedMotion.matches) {
     const ca = Math.cos(me.travel ?? me.a), sa = Math.sin(me.travel ?? me.a);
     for (let i = 0; i < 2; i++) slipParticles.push({
@@ -4103,7 +4107,7 @@ function fieldCentres() {
         const angle = step * Math.PI / 8;
         const px = centre.x + Math.cos(angle) * radius;
         const py = centre.y + Math.sin(angle) * radius;
-        if (fieldAt(px, py, W, H) === i && streetAt(px, py, W, H) === 0) return { name: FIELD_NAMES[i], x: px, y: py };
+        if (fieldAt(px, py, W, H) === i && roadAt(px, py, W, H) === 0) return { name: FIELD_NAMES[i], x: px, y: py };
       }
     }
     return { name: FIELD_NAMES[i], x: centre.x, y: centre.y };
