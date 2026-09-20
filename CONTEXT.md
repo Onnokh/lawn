@@ -561,8 +561,8 @@ at how big the map is. `drawMap` publishes `--map-top` and `--map-side` when
 they move. The keys stand on the middle of those two — the map's right edge
 is the margin it is drawn with and its left edge is `--map-side` in from the
 right, so the middle of the two is the middle of the map at any size. The
-World Quest Tracker takes the height that is left above them, and the touch
-buttons stand where the keys would be.
+World Quest Tracker takes the height that is left above them on desktop.
+Touch controls use their own bottom-corner layout, independent of map size.
 
 The Tracker takes that height as a whole, and its list takes what the heading
 and the summary leave. Capping the list instead means guessing what those two
@@ -1068,8 +1068,8 @@ continuous swath with few messages. See "What a report costs".
 
 ## Driving with a thumb
 
-A coarse pointer gets a stick in the bottom left corner and two buttons in the
-bottom right. The stick is a **direction**, not a wheel: it says where on the
+A coarse pointer gets a stick in the bottom left corner and a two-by-two group
+of Brake, Emote, Achievements and leaderboard buttons in the bottom right. The stick is a **direction**, not a wheel: it says where on the
 Lawn the Mower must go, and the Mower turns towards that heading as fast as it
 can turn. This works because the camera holds one heading. Wheel controls read
 as inverted every time the Mower faces the bottom of the screen, which is half
@@ -1083,15 +1083,23 @@ The base of the stick moves to the thumb that touches the zone. A stick with a
 fixed base is a stick the thumb must find first, and a thumb that misses drives
 the Mower into the hedge.
 
-Three things must stay clear of the thumbs on a small screen: the score, the
-title and the credit move to the top, the Lawn keeps the middle, and the World
-Quest Tracker folds down to its heading. Folded, the Tracker still says which
-Field you are in and how much of it is cut, because that is the part you read
-while you drive.
+The touch header holds the title, sound and score. Speed, driving mode and
+the slipstream meter are not shown. Log and Map
+are 44px toggles beside the folded World Quest Tracker. The tracker hides its
+list completely until opened. The map, log and emote picker give way to each
+other, keeping expanded controls out of the thumb zones. The map shrinks to
+fit between the header and controls on short portrait screens; landscape
+keeps the map between the thumb zones. Safe-area insets protect the edges.
+
+Awards and the leaderboard open one at a time as scrollable touch dialogs.
+An explicit close button, backdrop or Escape dismisses them. Opening one
+clears held driving input and makes background elements inert; closing it
+restores the trigger's focus. Desktop keeps its illustrated panels and
+hold-key shortcuts. Entering touch mode also updates the help text.
 
 A phone held sideways is 812 x 390: wide enough to pass a width breakpoint and
-far too short for the layout behind it. The small layout therefore answers to
-both, and the minimap is measured against the height as well as the width.
+far too short for the layout behind it. The touch layout therefore answers to
+both dimensions.
 
 ## The server
 
