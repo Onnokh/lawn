@@ -833,7 +833,8 @@ import { TREES, treeMesh } from '/trees.js';
 import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '/mowing.js';
 import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
 import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
-import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, BRIDGE } from '/fields.js';
+import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, WATER, BRIDGE } from '/fields.js';
+import { STREET_HALF_WIDTH } from '/road.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 const roadAt = streetAt;
 /**
@@ -2650,8 +2651,8 @@ fn groundColour(w : vec2f) -> vec3f {
   let worn = mix(dirt, vec3f(0.31, 0.34, 0.14), 0.6);
   col = mix(mix(dirt, worn, smoothstep(0.0, 0.5, verge)),
             col, smoothstep(0.35, 1.0, verge));
-  let across = roadDistance(w);
-  let road = 1.0 - smoothstep(ROAD_HALF_WIDTH - 0.4, ROAD_HALF_WIDTH + 0.8, across + grain * 0.35);
+  let across = abs(ringDistance(w));
+  let road = 1.0 - smoothstep(${STREET_HALF_WIDTH.toFixed(1)} - 0.4, ${STREET_HALF_WIDTH.toFixed(1)} + 0.8, across + grain * 0.35);
   let tracks = exp(-pow((across - 3.5) / 0.85, 2.0));
   let gravel = vec3f(0.49, 0.39, 0.25) * (1.0 + grain * 0.09 - tracks * 0.12);
   col = mix(col, gravel, road);
@@ -2696,7 +2697,7 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
                       ripple(i.w + vec2f(0.0, e), C.misc.x) - h0) * (2.6 / e);
     n = normalize(mix(n, normalize(vec3f(-slope.x, 1.0, -slope.y)), wetness));
     // Shallow water keeps the colour of the bed; deep water loses it.
-    let deep = smoothstep(0.0, DITCH, depth);
+    let deep = smoothstep(0.0, ${WATER.toFixed(1)}, depth);
     base = mix(base, mix(vec3f(0.22, 0.34, 0.28), vec3f(0.05, 0.15, 0.19), deep), wetness);
   }
   // The daze of the shadow map may only be read from uniform control flow,
