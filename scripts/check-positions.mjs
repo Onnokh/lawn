@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { build } from 'esbuild';
 import { motion, addReport, samplePeer, PositionReports, INTERP_DELAY, PREDICT_MS } from '../public/positions.js';
-import { slipstream } from '../public/driving.js';
+import { slipstream, stepDrive } from '../public/driving.js';
 
 const report = (t, x, vx = 25, y = 100, vy = 0, a = 0) => ({ t, x, y, vx, vy, a });
 const buf = [report(0, 100), report(100, 102.5)];
@@ -111,6 +111,19 @@ assert.equal(packets[1].vx,0);
 frameNow+=110;
 vm.runInContext('drive(1/60,1220)',driving);
 assert.equal(packets.length,2,'idle frames keep the existing traffic budget');
+
+// Exercise the client adapter with real physics: invalid motion also breaks the camera.
+driving.stepDrive = stepDrive;
+driving.peers.clear();
+driving.connected = false;
+driving.moveMower = (dx,dy) => { driving.me.x += dx; driving.me.y += dy; };
+driving.me = {x:100,y:100,a:0,v:0};
+vm.runInContext('drive(1/60,1220)',driving);
+assert.ok([driving.me.x,driving.me.y,driving.me.a,driving.me.v].every(Number.isFinite),'idle client motion stays finite');
+driving.held = key => key === 'w';
+for (let i=0;i<120;i++) vm.runInContext('drive(1/60,1220)',driving);
+assert.ok(driving.me.x > 110,'client throttle moves the mower with real street physics');
+assert.ok([driving.me.x,driving.me.y,driving.me.a,driving.me.v].every(Number.isFinite),'driving keeps the camera inputs finite');
 
 // Run the real server message handler and speed limiter with in-memory sockets.
 const bundled = await build({entryPoints:['src/index.ts'],bundle:true,write:false,format:'esm',platform:'node',
