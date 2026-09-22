@@ -1,0 +1,7 @@
+Generated with the built-in image_gen tool.
+
+Use case: logo-brand
+Asset type: square browser favicon for keepmow.ing, a playful shared lawn mowing game.
+Primary request: A bold, charming emblem of three freshly cut grass blades, with the middle blade taller, forming a single compact tuft. Simple sculpted low-poly game-art silhouette, bright lime and fresh green blades on a solid very dark forest-green square background that fills the entire canvas edge to edge. A subtle lighter cut edge on the blades suggests freshly mown grass.
+Composition: centered, large silhouette filling 80 percent of canvas, thick forms readable at 16x16 pixels, minimal details, crisp edges, flat front view.
+Constraints: one icon only, no text, no letters, no border, no mockup, no tiny decorative elements, no gradients in background. 1024x1024 square.
