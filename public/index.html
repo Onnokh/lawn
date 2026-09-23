@@ -1032,6 +1032,9 @@ function receiveBall(message) {
         message.rollX, message.rollY, message.n].every(Number.isFinite)) return;
   ball = { ...message };
   if (!ballVisual) ballVisual = { ...ball };
+  // The Lawn owns the hit, so the Bonk rides in with the ball and everyone on
+  // the field hears the same one, not only the Mower that swung at it.
+  if (Number.isFinite(message.bonk)) mowerSound.bonk(message.bonk);
   ballReceivedAt = performance.now();
   ballFrameAt = ballReceivedAt;
   // Predict only a short distance; stale connections must not launch a ghost ball.
@@ -2059,6 +2062,12 @@ function bump(id, x, y, now, closing) {
   if (now - previous < 350 || closing < BUMP_SPEED) return;
   bumps.push({ x, y, born: now });
   if (bumps.length > 12) bumps.shift();
+  // Both Mowers measure the same contact and so both hear it, the same way
+  // both daze themselves. The Lawn is not asked: unlike the Ball, which it
+  // owns, a Bump is already worked out on the screens it happened on.
+  // A ram at `STUN_SPEED` sits near half force, so a daze is loud but a
+  // head-on at speed is louder still.
+  mowerSound.bump((closing - BUMP_SPEED) / 12);
   if (closing < STUN_SPEED || now < stunReadyAt) return;
   stunUntil = now + STUN_MS;
   stunReadyAt = stunUntil + STUN_GRACE_MS;

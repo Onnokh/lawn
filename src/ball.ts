@@ -11,7 +11,9 @@ export interface Ball {
 export interface BallMower {
   id: string; x: number; y: number; vx: number; vy: number;
 }
-export interface BallContact { id: string; at: number; nx: number; ny: number }
+/** `force` is how hard the hit landed, 0 to 1: a nudge is near 0, a full-speed
+ * charge is 1. It is what the Bonk is heard at, so it rides on the contact. */
+export interface BallContact { id: string; at: number; nx: number; ny: number; force: number }
 export function createBall(x: number, y: number): Ball {
   return { x, y, z: BALL_RADIUS, vx: 0, vy: 0, vz: 0, rollX: 0, rollY: 0 };
 }
@@ -48,7 +50,7 @@ export function hitBall(b: Ball, mower: BallMower, now: number, previous?: BallC
   if (together) b.vz = Math.min(17, b.vz + 5 + opposition * 5);
   const horizontal = Math.hypot(b.vx, b.vy);
   if (horizontal > 30) { b.vx *= 30 / horizontal; b.vy *= 30 / horizontal; }
-  return { id: mower.id, at: now, nx, ny };
+  return { id: mower.id, at: now, nx, ny, force: Math.min(1, impulse / 20) };
 }
 
 export function stepBall(b: Ball, dt: number, width: number, height: number,

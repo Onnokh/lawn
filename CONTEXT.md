@@ -1065,6 +1065,51 @@ of the housing, including when reversing.
 client/server cut and score agreement, and split strokes. The map check uses
 the same blade radius and asserts that every field remains completable.
 
+## A Bonk belongs to the Lawn, not to the ear that hears it
+
+The hit is the Lawn's: it runs the ball, and `hitBall` is the only thing that
+knows a contact happened rather than two shapes overlapping. So the Bonk rides
+in on the ball message that reports the hit, as `bonk`, and everybody on the
+field hears the same one at the same moment. Read off the client instead — a
+jump in the ball's velocity, say — and the Mower that swung would hear a hit
+nobody else did, and a Mower watching from the far side would hear nothing.
+
+`force` on the contact is the impulse the ball took, 0 to 1. It is what the
+Bonk is played at, and it is the only thing that tells you how well you caught
+the ball: a dribble alongside it sounds like a dribble, a full-speed charge
+sounds like one. Held flat, every touch is a home run.
+
+The Bonk jumps the 50 ms throttle on ball messages. A ball message can wait —
+the client is predicting between them anyway — but a knock heard a frame late
+belongs to no hit anyone saw. It is on the hit message only, and never on the
+one a Mower gets on arrival: a Bonk is something that happened, not something
+the ball carries about with it.
+
+The sound is built rather than loaded, like the engine beside it, and hangs off
+the limiter rather than the master gain: the master follows the Mower and sits
+at zero whenever it is parked, and a ball you sent rolling goes on bonking
+about after you have stopped.
+
+## A Bump is heard where it is felt
+
+A Bump makes the heavy noise, and it is played on the screens the contact
+happened on rather than relayed from the Lawn. That is the opposite of the
+Ball, and for the opposite reason: the Lawn owns the Ball and is the only
+thing that knows it was struck, while both Mowers in a Bump already measure
+the same contact and each daze themselves on it. Asking the Lawn would be
+asking it to repeat what both screens have already worked out. A Mower
+standing off to one side therefore does not hear it, the same way the Bump
+was never its event to begin with.
+
+It is voiced apart from the Ball. A ball is hollow and rings at about 180 Hz;
+two steel decks meeting are weight and no note, so the deck dives an octave and
+a half inside the first fifty milliseconds and then sits at about 50 Hz while
+it rings out. Where the pitch lands is stated in Hz and not as a fraction of
+where it started: taken as a fraction it falls with the force as well, and a
+light knock ends up under 30 Hz, which is not a quiet sound but no sound at
+all on the speakers most people are on. Force moves how loud and how long a
+Bump is, and never how deep it is beyond what a speaker can still carry.
+
 ## The board wears the medals
 
 Every name on the board carries a star with a number in it: how many

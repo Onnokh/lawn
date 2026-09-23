@@ -48,7 +48,16 @@ for (const rolling of [0, 9.5]) {
   assert.ok(fast.z > R + 0.8, 'hard hit is visibly airborne after half a second');
 }
 const gentle = createBall(100,100);
-hitBall(gentle,{id:'slow',x:97,y:100,vx:2,vy:0},1000);
+const nudge = hitBall(gentle,{id:'slow',x:97,y:100,vx:2,vy:0},1000);
 assert.ok(gentle.vx < 4 && gentle.vz < 3, 'gentle nudges remain controllable');
 
-console.log('Ball direction, combined lift, gravity, settling, parked contact, height clearance, bounds and banks pass.');
+// The Bonk is heard at the contact's force, so a nudge and a charge must not
+// arrive at the same loudness, and neither may leave the 0..1 the sound takes.
+const charge = hitBall(createBall(100,100),{id:'fast',x:97,y:100,vx:13,vy:0},1000);
+for (const [what, contact] of [['nudge', nudge], ['charge', charge]]) {
+  assert.ok(contact.force > 0 && contact.force <= 1, `${what} force stays within 0..1`);
+}
+assert.ok(charge.force > nudge.force + 0.3, 'a charge bonks harder than a nudge');
+assert.ok(nudge.force < 0.3, 'a nudge stays quiet');
+
+console.log('Ball direction, combined lift, gravity, settling, parked contact, height clearance, bounds, banks and bonk force pass.');

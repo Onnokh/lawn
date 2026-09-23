@@ -973,8 +973,13 @@ export class Lawn extends DurableObject {
     });
   }
 
-  private ballMessage(): string {
-    return JSON.stringify({ t: "ball", ...this.ball, n: Date.now() });
+  /**
+   * `bonk` is only on the message that reports a hit, and is the force of the
+   * hardest one in that tick. A Mower that arrives later is not told about it:
+   * a Bonk is a thing that happened, not a thing the ball carries.
+   */
+  private ballMessage(bonk = 0): string {
+    return JSON.stringify({ t: "ball", ...this.ball, n: Date.now(), ...(bonk > 0 && { bonk }) });
   }
 
   private trackBallMower(ws: WebSocket, id: string, at: Place): void {
@@ -995,6 +1000,7 @@ export class Lawn extends DurableObject {
   private tickBall(): void {
     const now = Date.now();
     const steps = Math.min(12, Math.floor((now - this.ballTick) / (BALL_STEP * 1000)));
+    let bonk = 0;
     for (let i = 0; i < steps; i++) {
       this.ballTick += BALL_STEP * 1000;
       for (const [ws, mower] of this.ballMowers) {
@@ -1004,15 +1010,19 @@ export class Lawn extends DurableObject {
           vx: now - mower.at < 180 ? mower.vx : 0,
           vy: now - mower.at < 180 ? mower.vy : 0,
         }, this.ballTick, this.ballContact);
-        if (contact) this.ballContact = contact;
+        if (contact) {
+          this.ballContact = contact;
+          bonk = Math.max(bonk, contact.force);
+        }
       }
       stepBall(this.ball, BALL_STEP, LAWN_WIDTH, LAWN_HEIGHT,
         (x, y) => placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet);
     }
     if (now - this.ballTick > 200) this.ballTick = now;
     const moving = ballMoving(this.ball);
-    if (!moving || now - this.ballSent >= 50) {
-      this.broadcast(this.ballMessage());
+    // A Bonk jumps the throttle: heard late it belongs to no hit anyone saw.
+    if (bonk > 0 || !moving || now - this.ballSent >= 50) {
+      this.broadcast(this.ballMessage(bonk));
       this.ballSent = now;
     }
     if ((!moving || now - this.ballSaved > 2000)
