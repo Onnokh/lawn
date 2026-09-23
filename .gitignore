@@ -25,3 +25,6 @@ public/weather.js
 
 # Claude Code local dev-server launch config, machine-specific.
 .claude/
+
+# Local Worker secrets, such as RYBBIT_API_KEY.
+.dev.vars

@@ -1,0 +1,3 @@
+# Copy to .dev.vars to send Rybbit events from `wrangler dev`.
+# Leave it out and the Lawn sends none.
+RYBBIT_API_KEY=
