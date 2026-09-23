@@ -13,5 +13,11 @@
     { "pattern": "keepmow.ing", "custom_domain": true },
     { "pattern": "www.keepmow.ing", "custom_domain": true }
   ],
-  "observability": { "enabled": true }
+  "observability": { "enabled": true },
+  // Rybbit analytics. The URL and the site id are public; the API key is a
+  // secret: `wrangler secret put RYBBIT_API_KEY`, or `.dev.vars` locally.
+  "vars": {
+    "RYBBIT_API_URL": "https://rybbit.missingmounts.com",
+    "RYBBIT_SITE_ID": "3a6186bd18f7"
+  }
 }

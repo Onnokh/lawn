@@ -5,7 +5,8 @@ import { effectiveElapsedMs } from "./weather";
 import { motion } from "./positions";
 import { MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from "./mowing";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
-import { FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
+import { ACHIEVEMENTS, FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
+import { trackEvent, type RybbitEnv } from "./analytics";
 import { DurableObject } from "cloudflare:workers";
 
 /**
@@ -707,7 +708,10 @@ export class Lawn extends DurableObject {
     // it says.
     const id = mowerId();
     this.ctx.acceptWebSocket(server, address ? [address] : []);
-    server.serializeAttachment({ id, key: "" });
+    // The browser rides along for the analytics, cut short so it can never
+    // crowd the attachment past what a socket may carry.
+    const ua = (request.headers.get("User-Agent") ?? "").slice(0, 400);
+    server.serializeAttachment({ id, key: "", ua });
     server.send(JSON.stringify(this.hello(id)));
     server.send(this.snapshot());
     server.send(this.ballMessage());
@@ -1036,6 +1040,7 @@ export class Lawn extends DurableObject {
     // Mower stood, and it fires for a reload exactly as it does for a goodbye.
     // Whether anything is said about it is `sweepLeaving`'s to decide.
     if (who?.id) this.broadcast(JSON.stringify({ t: "left", id: who.id }), ws);
+    this.track(ws, "mower_left");
     if (who?.key && who?.name && !this.keyIsHere(who.key, ws)) {
       this.leaving.set(who.key, { name: who.name, at: Date.now() });
     }
@@ -1202,6 +1207,10 @@ export class Lawn extends DurableObject {
     if (won.length) {
       const who = ws.deserializeAttachment() as { id?: string; name?: string } | null;
       for (const bit of won) this.broadcastNote({ k: "won", nm: who?.name, w: bit });
+      for (const bit of won) {
+        const achievement = ACHIEVEMENTS.find((held) => held.bit === bit);
+        this.track(ws, "achievement_won", { achievement: achievement?.name ?? String(bit), tier: achievement?.tier ?? "" });
+      }
     }
     try {
       ws.send(JSON.stringify({ t: "got", a: after, ...this.tallyMessage(score) }));
@@ -1415,7 +1424,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
    * the same colour, on every visit.
    */
   private claim(ws: WebSocket, given?: unknown): void {
-    const who = ws.deserializeAttachment() as { id?: string; key?: string } | null;
+    const who = ws.deserializeAttachment() as { id?: string; key?: string; ua?: string } | null;
     if (who?.key) return;
 
     const held = typeof given === "string" ? this.scores.get(given) : undefined;
@@ -1425,7 +1434,8 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
     // without two of its tabs becoming one Mower.
     const id = who?.id ?? mowerId();
     const name = held?.n ?? mowerId();
-    ws.serializeAttachment({ id, key, name });
+    ws.serializeAttachment({ id, key, name, ua: who?.ua, at: Date.now() });
+    this.track(ws, "mower_arrived", { returning: !!held, achievements: countHeld(held?.a ?? 0) });
     // Say so to the Lawn. A Mower is only worth announcing once it holds its
     // Key: that is the moment it has the name it will wear, and the Key is
     // what says whether this is somebody new or the same Mower back from a
@@ -1628,6 +1638,24 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
     return budget;
   }
 
+  /**
+   * Tell Rybbit what a Mower did. It is sent after the answer, never before
+   * it, so a slow or absent Rybbit costs the Lawn nothing. A socket that has
+   * not said which Key it holds is nobody yet, and is not counted.
+   */
+  private track(ws: WebSocket, name: string, properties: Record<string, string | number | boolean> = {}): void {
+    const who = ws.deserializeAttachment() as { key?: string; ua?: string; at?: number } | null;
+    if (!who?.key) return;
+    if (name === "mower_left" && who.at) properties = { ...properties, seconds: Math.round((Date.now() - who.at) / 1000) };
+    this.ctx.waitUntil(trackEvent(this.env as RybbitEnv, {
+      name,
+      key: who.key,
+      properties,
+      ipAddress: this.ctx.getTags(ws)[0],
+      userAgent: who.ua,
+    }));
+  }
+
   private announceMowers(): void {
     // webSocketClose fires before the socket leaves the list.
     const sockets = this.ctx
@@ -1655,7 +1683,7 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
   }
 }
 
-export interface Env {
+export interface Env extends RybbitEnv {
   LAWN: DurableObjectNamespace;
   ASSETS: Fetcher;
 }
