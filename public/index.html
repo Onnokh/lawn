@@ -841,11 +841,12 @@ import { landScore, updateScore } from '/score.js';
 import { BALL_RADIUS, BALL_STEP, stepBall } from '/ball.js';
 import { TREES, treeMesh } from '/trees.js';
 import { MOWER_SCALE, DECK_SIZE, DECK_OFFSET, MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from '/mowing.js';
-import { stepDrive, slipstream, STREET_SPEED } from '/driving.js';
+import { stepDrive, slipstream, soakAfter, STREET_SPEED } from '/driving.js';
 import { INTERP_DELAY, motion as reportMotion, addReport, samplePeer, PositionReports } from '/positions.js';
 import { rainIntensityAt as scheduledRainIntensityAt, effectiveElapsedMs } from '/weather.js';
 import { RAIN_COUNT, RAIN_WGSL } from '/rain.js';
-import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, BRIDGE } from '/fields.js';
+import { fieldAt, wetAt, blocked, dryStart, buildMapImage, MAP_WGSL, FIELD_NAMES, createFieldQuests, streetAt, SEEDS, WATERS, BRIDGE,
+  wadeAt, wheelDepths, WHEELS } from '/fields.js';
 import { ACHIEVEMENTS, TIERS, countHeld, holds } from '/achievements.js';
 const previewRain = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
   && new URLSearchParams(location.search).get('weather') === 'rain';
@@ -2066,16 +2067,16 @@ function bump(id, x, y, now, closing) {
   if (connected) send({ t: "bump" });
 }
 
-/** Clearance keeps the wheels outside banks and trunks. */
+/** Clearance keeps the wheels outside trunks, and the Mower out of the Deep. */
 function obstacle(x, y) {
   return blocked(x, y, W, H, COLLISION_RADIUS);
 }
 
 /**
- * Take one step around banks and trunks. A step that ends in an obstacle
- * is tried again along each axis on its own, so a Mower that meets a bank at
- * an angle slides along it instead of stopping dead. A Mower that is somehow
- * already inside an obstacle is allowed to escape.
+ * Take one step around the Deep and trunks. A step that ends in an obstacle
+ * is tried again along each axis on its own, so a Mower that meets the Deep
+ * at an angle slides along its edge instead of stopping dead. A Mower that is
+ * somehow already inside an obstacle is allowed to escape.
  */
 function stepAshore(x, y, dx, dy) {
   if (!obstacle(x + dx, y + dy) || obstacle(x, y)) return [x + dx, y + dy];
@@ -2172,7 +2173,7 @@ function drive(dt, lawnNow) {
   const road = onRoad(me.x, me.y);
   const motion = stepDrive(me, { throttle: fwd, turn, brake: held(' ') || touchBrake,
     street: road, grass: bite(lawnNow), tow: slipstream(me, peers.values(), now, onRoad), stunned,
-    rain: rainIntensityAt(lawnNow) }, dt);
+    rain: rainIntensityAt(lawnNow), wade: wadeAt(me.x, me.y, me.a, W, H) }, dt);
   // The daze reads on the Mower itself, and not only in the Stars above it.
   if (stunned && !reducedMotion.matches) me.a += Math.sin(now * 0.021) * 1.3 * dt;
 
@@ -2264,8 +2265,9 @@ function interpolatePeer(p, renderTime, dt) {
  * model is drawn as a dot on the map either way.
  */
 function allMowers() {
-  const seat = (p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false, pitch: p.pitch ?? 0, roll: p.roll ?? 0 });
-  const mine = { x: me.x, y: me.y, a: me.a, hue: myHue, me: true, pitch: me.pitch ?? 0, roll: me.roll ?? 0 };
+  const water = (p) => ({ sink: p.sink ?? 0, dipPitch: p.dipPitch ?? 0, dipRoll: p.dipRoll ?? 0, soak: p.soak ?? 0 });
+  const seat = (p) => ({ x: p.x, y: p.y, a: p.a, hue: p.hue, me: false, pitch: p.pitch ?? 0, roll: p.roll ?? 0, ...water(p) });
+  const mine = { x: me.x, y: me.y, a: me.a, hue: myHue, me: true, pitch: me.pitch ?? 0, roll: me.roll ?? 0, ...water(me) };
   const others = [...peers.values()];
   if (others.length + 1 > MOWER_SLOTS) {
     others.sort((a, b) => (a.x - me.x) ** 2 + (a.y - me.y) ** 2
@@ -2293,7 +2295,7 @@ const FIELD_WGSL = `struct Cam {
   mowerCol : array<vec4f, ${MOWER_SLOTS}>,    // paint
   ball : vec4f, // x, height, y, radius
   ballRoll : vec4f,
-  mowerLean : array<vec4f, ${MOWER_SLOTS}>,   // pitch, roll; z and w spare
+  mowerLean : array<vec4f, ${MOWER_SLOTS}>,   // pitch, roll, sink into the Water, wet
   flare : vec4f,   // the finished Field, the second it finished, and its middle
   weather : vec4f, // rain intensity, animation time, patch centre x/z
 };
@@ -2715,9 +2717,15 @@ fn fs_ground(i : GOut) -> @location(0) vec4f {
     let slope = vec2f(ripple(i.w + vec2f(e, 0.0), C.misc.x) - h0,
                       ripple(i.w + vec2f(0.0, e), C.misc.x) - h0) * (2.6 / e);
     n = normalize(mix(n, normalize(vec3f(-slope.x, 1.0, -slope.y)), wetness));
-    // Shallow water keeps the colour of the bed; deep water loses it.
-    let deep = smoothstep(0.0, WATER, depth);
-    base = mix(base, mix(vec3f(0.22, 0.34, 0.28), vec3f(0.05, 0.15, 0.19), deep), wetness);
+    // The Shallows are a shelf of pale water over the bed, where a Mower may
+    // drive. At SHALLOWS the bed drops away, and the Deep is dark.
+    let shelf = mix(vec3f(0.35, 0.44, 0.33), vec3f(0.25, 0.39, 0.35), smoothstep(0.0, SHALLOWS, depth));
+    let deep = mix(vec3f(0.07, 0.19, 0.23), vec3f(0.03, 0.11, 0.16), smoothstep(SHALLOWS, WATER, depth));
+    let drop = smoothstep(SHALLOWS - 0.15, SHALLOWS + 0.3, depth);
+    // The lip of the shelf catches the light, so the edge reads from above.
+    let off = (depth - SHALLOWS + 0.1) / 0.13;
+    let lip = exp(-off * off) * 0.06;
+    base = mix(base, mix(shelf, deep, drop) + lip, wetness);
   }
   // The daze of the shadow map may only be read from uniform control flow,
   // so the water changes what is shaded and never whether it is shaded.
@@ -2916,6 +2924,10 @@ fn mowerAt(v : MVertex, ii : u32) -> Part {
   // Lift it by as much as the lean takes down: the wheels stand at 0.85 out
   // and 0.61 along, and the ground is the one thing that cannot give.
   body.y += (abs(sr) * 0.85 + abs(sp) * 0.61) * C.opts.y;
+  // In the Shallows the ground does give: the face of the Water is the
+  // ground, and what sinks under it is out of sight. The sink takes back
+  // what the lift above gave for the tilt the Water made.
+  body.y -= lean.z;
   var p : Part;
   p.world = vec3f(m.x + body.x * ca - body.z * sa, body.y, m.y + body.x * sa + body.z * ca);
   p.nrm = vec3f(n.x * ca - n.z * sa, n.y, n.x * sa + n.z * ca);
@@ -2929,6 +2941,7 @@ struct MOut {
   @location(1) tint  : vec3f,
   @location(2) panel : f32,
   @location(3) wpos  : vec3f,
+  @location(4) wet   : f32,
 };
 
 @vertex
@@ -2940,6 +2953,7 @@ fn vs_mower(v : MVertex, @builtin(instance_index) ii : u32) -> MOut {
   o.tint = C.mowerCol[ii].rgb;
   o.panel = p.panel;
   o.wpos = p.world;
+  o.wet = C.mowerLean[ii].w;
   return o;
 }
 
@@ -2954,6 +2968,8 @@ fn fs_mower(i : MOut) -> @location(0) vec4f {
   if (i.panel > 0.5) { base = vec3f(0.055, 0.065, 0.055); }
   if (i.panel > 1.5) { base = vec3f(0.31, 0.35, 0.32); }
   if (i.panel > 2.5) { base = vec3f(0.88, 0.87, 0.71); }
+  // Wet paint and wet rubber are darker than dry.
+  base *= 1.0 - 0.22 * i.wet;
   let n = normalize(i.nrm);
   let sun = normalize(C.sun.xyz);
   let view = normalize(C.eye.xyz - i.wpos);
@@ -2965,9 +2981,12 @@ fn fs_mower(i : MOut) -> @location(0) vec4f {
   let gloss = pow(max(dot(n, midway), 0.0), mix(24.0, 48.0, metal));
   let cloudPoint = i.wpos.xz + sun.xz * max(0.0, CLOUD_HEIGHT - i.wpos.y) / max(sun.y, 0.15);
   let visibility = sunlight(i.wpos) * (1.0 - cloudCover(cloudPoint) * 0.55);
-  let reflection = C.sunCol.rgb * gloss * (paint * 0.42 + metal * 0.65)
+  // A film of water shines on all of it, rubber too, with a hard edge.
+  let film = pow(max(dot(n, midway), 0.0), 90.0) * i.wet * 1.1;
+  let reflection = C.sunCol.rgb * (gloss * (paint * 0.42 + metal * 0.65) + film)
     * visibility * max(dot(n, sun), 0.0);
-  return vec4f(shade(base, n, i.wpos, 1.0) + reflection, 1.0);
+  let sheen = C.skyCol.rgb * pow(1.0 - max(dot(n, view), 0.0), 3.0) * i.wet * 0.3;
+  return vec4f(shade(base, n, i.wpos, 1.0) + reflection + sheen, 1.0);
 }
 
 /* ---------------- trees ---------------- */
@@ -3551,8 +3570,18 @@ function render(now, ts, dt) {
     C[MOWER_COL0 + k * 4] = r; C[MOWER_COL0 + 1 + k * 4] = gg; C[MOWER_COL0 + 2 + k * 4] = b;
     // A body that leans is motion nobody asked for, so it stands still for a
     // visitor who asked for less of it.
-    C[MOWER_LEAN0 + k * 4] = reducedMotion.matches ? 0 : m.pitch;
-    C[MOWER_LEAN0 + 1 + k * 4] = reducedMotion.matches ? 0 : m.roll;
+    // The Water tilts a Mower too, but that tilt is not motion: it is where
+    // the Mower stands, so it stays for everybody.
+    const pitch = (reducedMotion.matches ? 0 : m.pitch) + m.dipPitch;
+    const roll = (reducedMotion.matches ? 0 : m.roll) + m.dipRoll;
+    C[MOWER_LEAN0 + k * 4] = pitch;
+    C[MOWER_LEAN0 + 1 + k * 4] = roll;
+    // The shader lifts a tilted body clear of the ground, and a tilt the
+    // Water made must go down into it instead: the sink takes that lift back.
+    const lift = (r, q) => Math.abs(Math.sin(r)) * 0.85 + Math.abs(Math.sin(q)) * 0.61;
+    C[MOWER_LEAN0 + 2 + k * 4] = m.sink
+      + (lift(roll, pitch) - lift(roll - m.dipRoll, pitch - m.dipPitch)) * MOWER_SCALE;
+    C[MOWER_LEAN0 + 3 + k * 4] = m.soak;
   });
   if (ball) {
     C.set([ballVisual.x, ballVisual.z, ballVisual.y, BALL_RADIUS, ballVisual.rollX, ballVisual.rollY, 0, 0], BALL_OFFSET);
@@ -3749,7 +3778,8 @@ function recordSkids(now) {
         const from = previous[i], to = wheels[i];
         const x = (from.x + to.x) / 2, y = (from.y + to.y) / 2;
         if (x < 0 || y < 0 || x >= W || y >= H || wetAt(x, y, W, H) > -0.1) continue;
-        skidMarks.push({ from, to, born: now, strength: Math.min(1, slip / 8), grass: onGrass(x, y) });
+        skidMarks.push({ from, to, born: now, strength: Math.min(1, slip / 8), grass: onGrass(x, y),
+          wet: mower.soak ?? 0 });
       }
     }
     skidAnchors.set(mower, wheels);
@@ -3781,7 +3811,9 @@ function drawWheelWake(cw, ch, dpr) {
         const bridge = WATERS.some(([a, b]) => Math.hypot(
           px - (SEEDS[a][0] + SEEDS[b][0]) * W / 2,
           py - (SEEDS[a][1] + SEEDS[b][1]) * H / 2) < BRIDGE + 2.6);
-        if (!bridge && wetAt(x, y, W, H) < -0.2 && x >= 0 && y >= 0 && x < W && y < H) {
+        // Wet tyres raise no dust: they print the ground instead.
+        const dusty = grass || (me.soak ?? 0) < 0.15;
+        if (dusty && !bridge && wetAt(x, y, W, H) < -0.2 && x >= 0 && y >= 0 && x < W && y < H) {
           wheelWake.push({ x, y, ca: ca * direction, sa: sa * direction, grass, born: now,
             strength: Math.min(1, Math.abs(me.v) / 9) });
         }
@@ -3806,7 +3838,7 @@ function drawWheelWake(cw, ch, dpr) {
       const corners = [];
       for (const lx of [x0,x1]) for (const lz of [z0,z1]) for (const lh of [h0,h1]) {
         const x = lx*MOWER_SCALE, z = lz*MOWER_SCALE;
-        const p = project(mower.x + x*ca - z*sa, lh*MOWER_SCALE, mower.y + x*sa + z*ca);
+        const p = project(mower.x + x*ca - z*sa, Math.max(0, lh*MOWER_SCALE - mower.sink), mower.y + x*sa + z*ca);
         if (p) corners.push(p);
       }
       if (corners.length < 3) continue;
@@ -3827,6 +3859,7 @@ function drawWheelWake(cw, ch, dpr) {
       g.closePath(); g.clip('evenodd');
     }
   }
+  drawWaterFace(project, now, dpr);
   for (const mark of skidMarks) {
     const dx = mark.to.x - mark.from.x, dy = mark.to.y - mark.from.y;
     const length = Math.hypot(dx, dy);
@@ -3840,8 +3873,9 @@ function drawWheelWake(cw, ch, dpr) {
     ];
     if (corners.some(p => !p)) continue;
     const fade = Math.min(1, (12000 - (now - mark.born)) / 5000);
-    g.globalAlpha = fade * (0.25 + mark.strength * 0.3);
-    g.fillStyle = mark.grass ? '#293b1d' : '#493b2b';
+    g.globalAlpha = fade * (0.25 + mark.strength * 0.3 + mark.wet * 0.15);
+    // A wet slide smears the ground darker than rubber does.
+    g.fillStyle = mark.wet > 0.25 ? (mark.grass ? '#1b2a12' : '#2f2318') : mark.grass ? '#293b1d' : '#493b2b';
     g.beginPath(); g.moveTo(...corners[0]);
     for (const p of corners.slice(1)) g.lineTo(...p);
     g.closePath(); g.fill();
@@ -3865,6 +3899,268 @@ function drawWheelWake(cw, ch, dpr) {
       g.fillStyle = dust;
       g.beginPath(); g.arc(...p, radius, 0, Math.PI * 2); g.fill();
     }
+  }
+  g.restore();
+}
+
+/* ---------------- the Water on a Mower ---------------- */
+
+/**
+ * How far a wading Mower sinks, in Tiles, with all four wheels at `WADE`.
+ * The ground is the face of the Water, and what sinks below it is under the
+ * Water: the wheels go in and the deck rides just over the top.
+ */
+const SINK = 0.4;
+const WHEELBASE = WHEELS[2][0] - WHEELS[0][0];
+const TRACK = WHEELS[1][1] - WHEELS[0][1];
+/** Water in the air: splashes, spray and drips. Tiles; h is the height. */
+const droplets = [];
+/** Rings on the face of the Water, where something broke it. */
+const ripples = [];
+/** What wet tyres leave on dry ground. */
+const wetPrints = [];
+const RIPPLE_SIDES = 20;
+/** How fast a drop falls, in Tiles per second per second. */
+const DROP_FALL = 22;
+
+function throwDrop(x, y, h, vx, vy, vh, size, now) {
+  droplets.push({ x, y, h, vx, vy, vh, size, born: now });
+  if (droplets.length > 320) droplets.splice(0, droplets.length - 320);
+}
+
+/**
+ * A ring on the Water. Each spoke of it is measured out to the bank when it
+ * is made, so a ring spreads over the Water and stops at the shore instead of
+ * running up onto the grass.
+ */
+function rippleAt(x, y, size, now, life, strength) {
+  const reach = new Float32Array(RIPPLE_SIDES);
+  for (let k = 0; k < RIPPLE_SIDES; k++) {
+    const ca = Math.cos(k * Math.PI * 2 / RIPPLE_SIDES), sa = Math.sin(k * Math.PI * 2 / RIPPLE_SIDES);
+    let r = 0;
+    while (r < size && wetAt(x + ca * (r + 0.35), y + sa * (r + 0.35), W, H) > 0.02) r += 0.35;
+    reach[k] = r;
+  }
+  ripples.push({ x, y, size, born: now, life, strength, reach });
+  if (ripples.length > 90) ripples.shift();
+}
+
+/**
+ * What the Water does to every Mower, once a frame: how deep it stands, how
+ * wet it is, and the water it throws about. Your own Mower's soak is the
+ * drive model's, because it slides by it; the others' is worked out here
+ * from where they stand, by the same rule, because the Lawn does not send it.
+ */
+function stirWater(dt, lawnNow) {
+  const now = performance.now();
+  const rain = rainIntensityAt(lawnNow);
+  const calm = reducedMotion.matches;
+  for (const mower of [me, ...peers.values()]) {
+    const mine = mower === me;
+    const depths = wheelDepths(mower.x, mower.y, mower.a, W, H);
+    const wade = (depths[0] + depths[1] + depths[2] + depths[3]) / 4;
+    if (!mine) mower.soak = soakAfter(mower.soak ?? 0, wade, rain, dt);
+    // Each wheel sinks by its own depth, so a Mower that noses in dips its
+    // nose, and one that runs along the shore leans to the Water.
+    const front = (depths[2] + depths[3]) / 2 * SINK, rear = (depths[0] + depths[1]) / 2 * SINK;
+    const left = (depths[0] + depths[2]) / 2 * SINK, right = (depths[1] + depths[3]) / 2 * SINK;
+    const bob = calm ? 0 : Math.sin(now * 0.0055 + mower.x) * 0.035 * wade;
+    mower.sink = ease(mower.sink ?? 0, (front + rear) / 2 + bob, 0.12, dt);
+    mower.dipPitch = ease(mower.dipPitch ?? 0, -Math.atan2(front - rear, WHEELBASE), 0.12, dt);
+    mower.dipRoll = ease(mower.dipRoll ?? 0, Math.atan2(right - left, TRACK), 0.12, dt);
+    const was = mower.wheelsWet ?? depths.map(d => d > 0);
+    mower.wheelsWet = depths.map(d => d > 0);
+    if (calm || (!mine && (mower.x - me.x) ** 2 + (mower.y - me.y) ** 2 > 90 * 90)) continue;
+    const vx = mine ? me.driftX ?? 0 : mower.vx ?? 0;
+    const vy = mine ? me.driftY ?? 0 : mower.vy ?? 0;
+    const speed = Math.hypot(vx, vy);
+    const ca = Math.cos(mower.a), sa = Math.sin(mower.a);
+    const wheel = i => [mower.x + ca * WHEELS[i][0] - sa * WHEELS[i][1],
+      mower.y + sa * WHEELS[i][0] + ca * WHEELS[i][1]];
+    // In: a wheel that breaks the face of the Water throws it up.
+    for (let i = 0; i < 4; i++) {
+      if (!mower.wheelsWet[i] || was[i] || speed < 1.5) continue;
+      const [x, y] = wheel(i);
+      const count = Math.round(Math.min(22, 5 + speed * 1.6) * (mine ? 1 : 0.6));
+      for (let k = 0; k < count; k++) {
+        const angle = Math.atan2(vy, vx) + (Math.random() - 0.5) * 2.6;
+        const out = 1.2 + Math.random() * 2.8 + speed * 0.22;
+        throwDrop(x, y, 0.2, Math.cos(angle) * out + vx * 0.25, Math.sin(angle) * out + vy * 0.25,
+          3 + Math.random() * 4.5 + speed * 0.2, 1 + Math.random() * 1.2, now);
+      }
+      rippleAt(x, y, 2.4 + speed * 0.12, now, 1300, 1);
+      if (mine) mowerSound.splash(Math.min(1, speed / 11));
+    }
+    if (wade > 0.02 && speed > 0.8) {
+      // Through: the tyres throw a tail of it behind, and the nose pushes a
+      // wave out ahead that spreads into a wake.
+      mower.sprayDebt = (mower.sprayDebt ?? 0) + speed * wade * (mine ? 9 : 5) * dt;
+      while (mower.sprayDebt >= 1) {
+        mower.sprayDebt--;
+        const i = Math.random() < 0.7 ? Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2);
+        if (!mower.wheelsWet[i]) continue;
+        const [x, y] = wheel(i);
+        const back = 0.6 + Math.random() * 1.6 + speed * 0.3;
+        const side = (Math.random() - 0.5) * 3;
+        throwDrop(x, y, 0.25, -ca * back - sa * side + vx * 0.4, -sa * back + ca * side + vy * 0.4,
+          2 + Math.random() * 3 + speed * 0.3, 0.8 + Math.random(), now);
+      }
+      const anchor = mower.rippleAnchor;
+      if (!anchor || Math.hypot(mower.x - anchor.x, mower.y - anchor.y) > 1.3) {
+        mower.rippleAnchor = { x: mower.x, y: mower.y };
+        for (const i of [2, 3]) {
+          if (!mower.wheelsWet[i]) continue;
+          const [x, y] = wheel(i);
+          rippleAt(x + ca * 0.6, y + sa * 0.6, 3.2, now, 1500, 0.2 + wade * 0.45);
+        }
+      }
+    } else if (wade > 0.05 && now - (mower.idleRippleAt ?? 0) > 900) {
+      // Standing in it: the engine shakes a ring out of the Water now and then.
+      mower.idleRippleAt = now;
+      rippleAt(mower.x, mower.y, 3.4, now, 1800, 0.5);
+    }
+    const soak = mower.soak ?? 0;
+    if (soak <= 0.04 || wade > 0.02) { mower.printAnchor = null; continue; }
+    // Out, and still wet: it drips from the edge of the deck.
+    mower.dripDebt = (mower.dripDebt ?? 0) + soak * (mine ? 24 : 12) * dt;
+    while (mower.dripDebt >= 1) {
+      mower.dripDebt--;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const [along, across] = Math.random() < 0.6
+        ? [(Math.random() * 1.8 - 0.85) * MOWER_SCALE, side * 0.82 * MOWER_SCALE]
+        : [(side < 0 ? -0.84 : 0.94) * MOWER_SCALE, (Math.random() - 0.5) * 1.6 * MOWER_SCALE];
+      throwDrop(mower.x + ca * along - sa * across, mower.y + sa * along + ca * across,
+        (0.3 + Math.random() * 0.15) * MOWER_SCALE, vx * 0.92 + (Math.random() - 0.5) * 0.6,
+        vy * 0.92 + (Math.random() - 0.5) * 0.6, Math.random() * 0.8, 0.6 + Math.random() * 0.5, now);
+    }
+    // Its tyres print the ground, darker the wetter they are.
+    const anchor = mower.printAnchor;
+    const moved = anchor ? Math.hypot(mower.x - anchor.x, mower.y - anchor.y) : Infinity;
+    if (moved > 0.45) {
+      // A correction must not print a line across the map.
+      if (moved < 3 && speed > 0.5) {
+        for (let i = 0; i < 4; i++) {
+          const [x, y] = wheel(i);
+          if (x < 0 || y < 0 || x >= W || y >= H) continue;
+          wetPrints.push({ x, y, ca: vx / speed, sa: vy / speed, born: now, strength: soak, grass: onGrass(x, y) });
+        }
+        if (wetPrints.length > 640) wetPrints.splice(0, wetPrints.length - 640);
+      }
+      mower.printAnchor = { x: mower.x, y: mower.y };
+    }
+    // Sliding: the wet tyres scrub a fan of it out sideways.
+    const slip = vy * ca - vx * sa;
+    if (soak > 0.25 && Math.abs(slip) > 2) {
+      mower.slideDebt = (mower.slideDebt ?? 0) + Math.abs(slip) * soak * (mine ? 7 : 3) * dt;
+      while (mower.slideDebt >= 1) {
+        mower.slideDebt--;
+        const [x, y] = wheel(Math.floor(Math.random() * 2));
+        const out = Math.sign(slip) * (1 + Math.random() * 2.2);
+        throwDrop(x, y, 0.15, -sa * out + vx * 0.5 + Math.random() - 0.5, ca * out + vy * 0.5 + Math.random() - 0.5,
+          1.2 + Math.random() * 2.4, 0.7 + Math.random() * 0.6, now);
+      }
+    }
+  }
+}
+
+/**
+ * The face of the Water and the ground beside it, under the Mowers: wet
+ * prints, rings, and the waterline round each Mower that stands in the
+ * Water. It is drawn inside the mask of the Mowers' bodies, so the part of a
+ * waterline behind a Mower is behind it.
+ */
+function drawWaterFace(project, now, dpr) {
+  g.lineCap = 'round';
+  while (wetPrints.length && now - wetPrints[0].born > 8000) wetPrints.shift();
+  g.lineWidth = 3.6 * dpr;
+  for (const print of wetPrints) {
+    const age = (now - print.born) / 1000;
+    const life = 2 + print.strength * 6;
+    if (age >= life) continue;
+    const p = project(print.x, 0.05, print.y);
+    const end = project(print.x - print.ca * 0.55, 0.05, print.y - print.sa * 0.55);
+    if (!p || !end) continue;
+    g.globalAlpha = (1 - age / life) * (0.16 + print.strength * 0.34);
+    g.strokeStyle = print.grass ? '#1d2e14' : '#35281b';
+    g.beginPath(); g.moveTo(...p); g.lineTo(...end); g.stroke();
+  }
+  g.strokeStyle = '#eef8ff';
+  for (let i = ripples.length - 1; i >= 0; i--) {
+    const ring = ripples[i];
+    const t = (now - ring.born) / ring.life;
+    if (t >= 1) { ripples.splice(i, 1); continue; }
+    const r = 0.35 + ring.size * (1 - (1 - t) ** 2);
+    g.globalAlpha = (1 - t) ** 1.4 * 0.5 * ring.strength;
+    g.lineWidth = (1.1 + (1 - t) * 1.3) * dpr;
+    g.beginPath();
+    let open = false;
+    for (let k = 0; k <= RIPPLE_SIDES; k++) {
+      const j = k % RIPPLE_SIDES;
+      const angle = j * Math.PI * 2 / RIPPLE_SIDES;
+      const q = r > ring.reach[j] + 0.2 ? null
+        : project(ring.x + Math.cos(angle) * r, 0.012, ring.y + Math.sin(angle) * r);
+      if (!q) { open = false; continue; }
+      if (open) g.lineTo(...q); else g.moveTo(...q);
+      open = true;
+    }
+    g.stroke();
+  }
+  g.fillStyle = '#f4fbff';
+  const calm = reducedMotion.matches;
+  for (const mower of [me, ...peers.values()]) {
+    if (!mower.wheelsWet?.some(Boolean)) continue;
+    const ca = Math.cos(mower.a), sa = Math.sin(mower.a);
+    const unit = tileSize(project, mower.x, mower.y);
+    if (!unit) continue;
+    for (let k = 0; k < 40; k++) {
+      const turn = k / 40 * Math.PI * 2;
+      const c = Math.cos(turn), s = Math.sin(turn);
+      const along = (0.05 + Math.sign(c) * Math.abs(c) ** 0.5 * 0.97) * MOWER_SCALE;
+      const across = Math.sign(s) * Math.abs(s) ** 0.5 * 0.95 * MOWER_SCALE;
+      const x = mower.x + ca * along - sa * across, y = mower.y + sa * along + ca * across;
+      const q = wetAt(x, y, W, H) < 0.03 ? null : project(x, 0.012, y);
+      if (!q) continue;
+      // Foam gathers and breaks up in clumps along the waterline.
+      const churn = calm ? 0.5 : 0.5 + 0.5 * Math.sin(now * 0.006 + k * 2.4) * Math.sin(now * 0.0037 + k * 1.3);
+      g.globalAlpha = 0.16 + churn * 0.3;
+      g.beginPath(); g.arc(...q, (0.07 + churn * 0.12) * unit, 0, Math.PI * 2); g.fill();
+    }
+  }
+  g.globalAlpha = 1;
+}
+
+/** How many pixels a Tile of ground is across, at a point, through this camera. */
+function tileSize(project, x, y) {
+  const a = project(x, 0, y), b = project(x + 1, 0, y);
+  return a && b ? Math.hypot(b[0] - a[0], b[1] - a[1]) : 0;
+}
+
+/** Water in the air, over everything: each drop a short streak along its fall. */
+function drawDroplets(cw, ch, dpr) {
+  const now = performance.now();
+  const project = projector(cw, ch);
+  const unit = tileSize(project, me.x, me.y) || 30 * dpr;
+  g.save();
+  g.lineCap = 'round';
+  for (let i = droplets.length - 1; i >= 0; i--) {
+    const d = droplets[i];
+    const t = (now - d.born) / 1000;
+    const x = d.x + d.vx * t, y = d.y + d.vy * t;
+    const h = d.h + d.vh * t - 0.5 * DROP_FALL * t * t;
+    if (h <= 0 || t > 2.5) {
+      droplets.splice(i, 1);
+      // A big drop that lands on the Water rings it.
+      if (h <= 0 && d.size > 1.5 && Math.random() < 0.3 && wetAt(x, y, W, H) > 0.05) rippleAt(x, y, 0.9, now, 700, 0.5);
+      continue;
+    }
+    const s = Math.max(0, t - 0.028);
+    const a = project(x, h, y);
+    const b = project(d.x + d.vx * s, d.h + d.vh * s - 0.5 * DROP_FALL * s * s, d.y + d.vy * s);
+    if (!a || !b) continue;
+    const width = Math.max(1.2 * dpr, d.size * 0.05 * unit);
+    g.beginPath(); g.moveTo(...b); g.lineTo(...a);
+    g.globalAlpha = 0.3; g.strokeStyle = '#a9cbe0'; g.lineWidth = width * 2.3; g.stroke();
+    g.globalAlpha = 0.9; g.strokeStyle = '#f4fbff'; g.lineWidth = width; g.stroke();
   }
   g.restore();
 }
@@ -4377,6 +4673,7 @@ function drawHud(now) {
   drawSlipstream(cw, ch, dpr);
   drawWheelWake(cw, ch, dpr);
   drawMowing(cw, ch, dpr);
+  drawDroplets(cw, ch, dpr);
   drawBumps(cw, ch, dpr);
   drawStars(cw, ch, dpr);
   drawEmotes(cw, ch, dpr);
@@ -4398,7 +4695,8 @@ function frame(ts) {
   if (!mownAt || !F) { mowerSound.update(0, dt, false); return; }
   const now = Date.now() + clockOffset;
   drive(dt, now);
-  mowerSound.update(me.v, dt, connected);
+  stirWater(dt, now);
+  mowerSound.update(me.v, dt, connected, wadeAt(me.x, me.y, me.a, W, H));
   animateBall(ts);
   if (boardOpen && ts - boardAt > 250) { refreshBoard(); boardAt = ts; }
   // The bars move while the window is held open, or the one line that says

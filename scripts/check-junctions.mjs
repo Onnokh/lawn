@@ -3,10 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
-import { placeAt } from '../public/fields.js';
+import { placeAt, SHALLOWS } from '../public/fields.js';
 import { treeEarthAt } from '../public/trees.js';
 import { ringDistance, STREET_HALF_WIDTH } from '../public/road.js';
-import { COLLISION_RADIUS } from '../public/mowing.js';
 
 const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 const start = source.indexOf('const SEEDS:');
@@ -15,15 +14,19 @@ const start = source.indexOf('const SEEDS:');
 // whole file — `export class Lawn` is not something `vm` will run, so this
 // check threw instead of checking. It is in `package.json` now so it cannot
 // rot unnoticed again.
-const end = source.indexOf('/** Water and trunks stop', start);
+const end = source.indexOf('/** The Deep and trunks stop', start);
 assert.ok(start >= 0 && end > start, 'cannot find the map in src/index.ts');
-// The Lawn's own `placeAt` asks the trees where the bare earth is, and the
-// Mower how wide the bank is, so the sandbox is handed the same answers the
-// client uses. Anything the map depends on has to come in here, or this check
-// tests a map that is not the map.
-const server = vm.runInNewContext(ts.transpile(source.slice(start, end) + '\nplaceAt;', {
+// The Lawn's own `placeAt` asks the trees where the bare earth is, so the
+// sandbox is handed the same answers the client uses. Anything the map
+// depends on has to come in here, or this check tests a map that is not the
+// map.
+const lawn = vm.runInNewContext(ts.transpile(source.slice(start, end) + '\n({ placeAt, SHALLOWS });', {
   target: ts.ScriptTarget.ES2022,
-}), { treeEarthAt, ringDistance, STREET_HALF_WIDTH, COLLISION_RADIUS });
+}), { treeEarthAt, ringDistance, STREET_HALF_WIDTH });
+const server = lawn.placeAt;
+// The Lawn stops a Mower where the client says the Deep begins, or an honest
+// Mower in the Shallows is sent back to the bank.
+assert.equal(lawn.SHALLOWS, SHALLOWS, 'the Lawn and the client disagree about where the Deep begins');
 let checked = 0;
 for (const [width, height] of [[408, 272], [288, 192]]) {
   for (let y = 1; y < height - 1; y += 0.7) {

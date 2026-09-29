@@ -106,8 +106,9 @@ const SEEDS: [number, number][] = [
 ];
 const PATH = 2.6;
 const WATER = 3.4;
-/** As wide as a Mower is held off the Water, so no blade grows out of its reach. */
-const BANK = COLLISION_RADIUS;
+/** Where the Shallows end and the Deep begins. A Mower may wade this deep and no deeper. */
+const SHALLOWS = 1.8;
+const BANK = 1.6;
 const BRIDGE = 6;
 /** Mirrors `SEAMS` in `public/fields.js`: the seams that carry Water, and the Streets. */
 const WATERS = [[1, 2], [5, 6], [7, 8]];
@@ -195,16 +196,18 @@ function placeAt(x: number, y: number, width: number, height: number): { field: 
   return { field: bare ? -1 : first, wet, street, edge };
 }
 
-/** Water and trunks stop reported strokes, whatever the client says. */
+/** The Deep and trunks stop reported strokes, whatever the client says. */
 function blocked(x: number, y: number): boolean {
-  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet > 0
+  return placeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT).wet > SHALLOWS
     || treeAt(x, y, LAWN_WIDTH, LAWN_HEIGHT);
 }
 
 /**
- * How far apart the Lawn reads the swath while it looks for water. A run of
- * Water is `2 * WATER` Tiles wide, so a step this short can never stride over
- * one.
+ * How far apart the Lawn reads the swath while it looks for the Deep. Where
+ * the Deep parts the two banks it is wider than this, so no step strides over
+ * it. It narrows to nothing only at its two ends, and there the Shallows join
+ * round it: a step that misses it there takes a Mower where it could have
+ * waded, and `scripts/check-map.mjs` holds the map to that.
  */
 const WATER_STEP = 0.75;
 
@@ -1556,12 +1559,13 @@ if (((me.vx - them.vx) * dx + (me.vy - them.vy) * dy) / gap >= BUMP_CLOSING) ret
 
   /**
    * How far a Mower really gets along its swath: as far as it asked for, or
-   * as far as the near bank of the Water. A Mower cannot drive through water,
-   * so neither can a client that says it did — the Lawn stops the swath at
-   * the water's edge and sends that Mower the Lawn as the Lawn sees it.
+   * as far as the edge of the Deep. A Mower wades through the Shallows and
+   * cannot drive through the Deep, so neither can a client that says it did —
+   * the Lawn stops the swath where the Deep begins and sends that Mower the
+   * Lawn as the Lawn sees it.
    *
-   * An honest Mower is never held back here. Its own client keeps it a whole
-   * Mower's width from the water, and this stops only at the water itself.
+   * An honest Mower is never held back here. Its own client keeps its middle
+   * at `WADE`, short of the Deep, and this stops only at the Deep itself.
    */
   private dryRun(from: Place, ux: number, uy: number, distance: number): number {
     for (let travelled = WATER_STEP; travelled < distance; travelled += WATER_STEP) {
