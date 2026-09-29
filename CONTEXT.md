@@ -13,10 +13,8 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   capsule with radius `MOW_RADIUS` around that line.
 - **Field** — one parcel of the Lawn, and one quest. There are nine. A Field
   is the ground that lies nearer its own seed than any other seed, so no
-  Field is a box and no two are the same shape.
-- **Slack** — the last part in a hundred of a Field, which may stand and the
-  Field still count as cut. It is what turns the end of a quest back into
-  mowing.
+  Field is a box and no two are the same shape. It is finished when every
+  Tile of it is cut: nothing stands for free.
 - **Seam** — the boundary between two Fields, where the two nearest seeds are
   the same distance away. Every seam is a Path, a Street or Water, and those
   three are the whole map.
@@ -31,11 +29,23 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   passes.
 - **Verge** — the bare ground between the ring and the edge of the Lawn. It
   is what a Field gives up so the ring can be a boundary.
-- **Water** — a seam a Mower cannot enter: it stops a Mower at the bank.
+- **Water** — a seam a Mower cannot cross but at its Bridge. Its edge is the
+  Shallows and its middle is the Deep.
+- **Shallows** — the edge of the Water, as far in as `SHALLOWS`. A Mower drives
+  into them, slowly, and comes out soaked. They are the pale water.
+- **Deep** — the middle of a run of Water, past `SHALLOWS`. No Mower goes into
+  it: the client holds the middle of a Mower at `WADE`, short of it, and the
+  Lawn stops a swath where it begins. It is the dark water, and it is what
+  keeps Water a seam.
+- **Soak** — how wet a Mower is, from 0 to 1. The Shallows soak a Mower in a
+  moment, and out of them it dries in about ten seconds, longer in the rain. A
+  soaked Mower slides through a hard turn.
 - **Bridge** — the dry crossing that cuts every run of Water, at the middle
   point between the two seeds it runs between. It is what keeps Water a
   detour and not a wall.
-- **Bank** — the bare ground between the Water and the grass.
+- **Bank** — the bare ground between the Water and the grass, 1.6 Tiles wide.
+  A Mower cuts the grass beside the Water from the Shallows, so the Bank does
+  not have to be as wide as a Mower.
 - **Report** — the one message a Mower sends about itself: where it is and
   which way it points. It is the Mow Stroke and the position at once, because
   both say the same thing about the same movement. See "What a report costs".
@@ -118,9 +128,9 @@ second-nearest seed changes, which put a step in the shoreline there, an
 invisible bank a Mower stopped at. `scripts/check-junctions.mjs` is what found
 it.
 
-It goes in `placeAt` and not in the shading, so the water a Mower sees is the
-water it cannot drive into. Softening only the drawn edge would have been half
-the work and a lie.
+It goes in `placeAt` and not in the shading, so the Shallows a Mower sees are
+the Shallows it wades, and the Deep it sees is the Deep that stops it.
+Softening only the drawn edge would have been half the work and a lie.
 
 ## One table draws the map
 
@@ -169,15 +179,25 @@ three before it was believed.
 `node scripts/check-map.mjs` reads the map the way a Mower does and says
 whether it holds together: how much of the Lawn is grass, Path, Street and
 Water, and whether every Tile of every Field can still be cut. It holds the
-map to three rules and fails when one breaks — every Field is one piece, every
-Tile of dry ground can be reached, and no Tile is both wet and on a Street.
-The first is the one that says no Street splits a Field.
+map to four rules and fails when one breaks — every Field is one piece, every
+Tile of dry ground can be reached and every Tile of grass cut, no Tile is both
+wet and on a Street, and the Deep parts the banks: see "The water says no, and
+the Lawn says it too". The first is the one that says no Street splits a
+Field.
 
-A crumb is not a split. The bank is narrower than a Mower is wide, so the odd
-Tile of grass ends up in a pocket no Mower can enter, and the wander of a Path
-now and then pinches one off. The Slack is what says how much of that a quest
-can carry, and it is the same Slack the tracker measures against: below it,
-nothing on the screen can tell.
+A Field is finished only when all of it is cut, so the map may hold no crumbs.
+One Tile of grass that the wander of a Path pinches off is a split, and one
+Tile in a pocket no Mower can enter is a quest nobody can finish. The check
+fails on either.
+
+The Shallows are what keep the pockets away from the Water. `wet` is measured
+in the frame of a seam, and far from the seeds one unit of it lies across as
+many as four Tiles of ground. While all of the Water held a Mower 2.21 Tiles
+off, a bank of 1.6 left a strip of grass there wider than the blades reach,
+and a tuft of Foxglove Pasture stood for ever. The first fix made the bank
+2.21, the same number as the hold, and it cost 568 Tiles of grass. The fix now
+is the Shallows: a Mower wades in beside that strip and cuts it from the
+Water, so the bank is 1.6 again and the 568 Tiles are grass again.
 
 ## Finishing a Field is worth a moment
 
@@ -212,22 +232,31 @@ the page on a cut Lawn threw a celebration for somebody else's work.
 The flare is motion, so a visitor who asks for less of it keeps the banner,
 the tracker and the map, and the Lawn stays as it was.
 
-## The end of a quest is mowing, not searching
+## A Field is cut when all of it is cut
 
-A Field is ten thousand Tiles. Asking for every one of them made the last
+A Field used to count as cut with one part in a hundred still standing. That
+was the Slack, and it was there because asking for every Tile made the last
 minute of a quest a different game: the grass was plainly cut, the tracker
 said 99%, and the Mower drove the parcel again looking for one tuft it could
 not see from the seat.
 
-So a Field counts as cut with one part in a hundred still standing. That is
-about a hundred Tiles — a patch some ten Tiles across, which is a thing a
-Mower can miss without being careless, and not a thing it can leave half the
-Field standing behind.
+It went, because it was a freebie. One part in a hundred of a Field is about a
+hundred Tiles, a patch some ten Tiles across that nobody cut, and every Mower
+in the Field was crowned for it all the same. Now the stroke that takes the
+last Tile is the one that finishes the Field, and the Lawn and the tracker
+both measure against that last blade.
 
-The number on the screen is measured against that goal, not against the last
-blade. The bar therefore fills exactly as the quest completes, and it never
-reads 97% and then jumps: 97% really is 3% standing. Slack is what the
-progress is measured against; it is never taken off the end of it.
+The search is the cost, and it was taken with open eyes. The tracker keeps
+100% for the finish, so a Field reads 99% for about its last hundred Tiles,
+down to the last one. The Mower finds them by eye: cut turf is pale and
+standing grass is deep, which is the reason given under "A cut blade is pale".
+
+Two things still count as cut, and neither is a freebie. Stubble below a tenth
+of full height is grass a Mower did take, growing back. And grass never grows
+where no Mower can cut it, because `scripts/check-map.mjs` fails a map where it
+does, so a quest never waits on a tuft nobody can reach.
+`npm run test:crowning` leaves one Tile of each Field standing and proves that
+the Lawn crowns nobody for it.
 
 ## Driving has weight
 
@@ -359,21 +388,33 @@ limits the turn, and the Lawn caps travel using the shared `MAX_SPEED`.
 ## The water says no, and the Lawn says it too
 
 Water is the first thing on the Lawn a Mower cannot drive through, so both
-sides have to hold it. The client keeps a Mower a whole Mower's width from
-the water, and a step that would end in Water is tried again along each
-axis on its own, so a Mower that meets a bank at an angle slides along it
-instead of stopping dead.
+sides have to hold it. A Mower may drive into the Shallows and not into the
+Deep. The client holds the middle of a Mower at `WADE`, 0.3 short of the
+Deep, and a step that would go deeper is tried again along each axis on its
+own, so a Mower that meets the Deep at an angle slides along it instead of
+stopping dead.
 
-The Lawn then walks every swath before it cuts it, in steps of 0.75 Tiles —
-short enough that no step strides over water 5.2 Tiles wide — and stops the
-swath at the water's edge. A client that says it swam gets the near bank and
-a fresh Snapshot.
+The Lawn then walks every swath before it cuts it, in steps of 0.75 Tiles,
+and stops the swath where the Deep begins. A client that says it swam gets
+the near bank and a fresh Snapshot.
 
-This costs an honest Mower nothing. Its own client already holds it 2.2 Tiles
-from the water, and the Lawn stops only at the water itself, so the two
-never disagree. What it closes is the whole of the gain: the far bank stands
-6.8 Tiles from the near water's edge and a Mow Stroke reaches about 2.03, so no
-Mower cuts across Water, however its client is written.
+This costs an honest Mower nothing. Its own client holds it short of the Deep
+by the margin, and the Lawn stops only at the Deep itself, so the two never
+disagree. The margin is for the straight line the Lawn reads between two
+Reports: a Mower drives a curve, and the line must not cut a corner of the
+Deep that the curve went round.
+
+What it closes is the whole of the gain. Where the Deep parts the two banks it
+is wider than a step, so no swath strides over it, and past it are the far
+Shallows and the far Bank: the nearest grass across the Deep stands 4.47 Tiles
+from its edge, and a Mow Stroke reaches about 2.03. So no Mower cuts across
+Water, however its client is written.
+
+At its ends the Deep narrows to nothing, and there a swath can stride over it
+between two steps. The Shallows join round the end of the Deep there, so the
+stride takes a Mower nowhere it could not wade. `scripts/check-map.mjs` finds
+every such stride and fails the map if one has no way round within two Tiles,
+which is what a run of Water that has thinned out in the middle would have.
 
 One hole stays open, and it is the one that was already there: a Mower the
 Lawn has not seen is believed once, so a reconnection can put a Mower down on
@@ -384,6 +425,45 @@ and buys it no grass.
 Every run of Water is cut by one Bridge, and `scripts/check-map.mjs` proves the
 result is one piece of ground: if it were not, a Field behind the water could
 never reach 100% and its quest could never be completed.
+
+## The Shallows hold a Mower, and it comes out wet
+
+The Shallows are there to be driven through, and they are worth driving
+through only if they feel like water. They do two things to a Mower, and both
+are in `stepDrive` and nowhere else.
+
+**In, the Water holds it.** Wade is read at the four wheels: how deep each
+one stands, as a part of `WADE`, and the mean of the four. The Water adds drag
+and lowers the limit, so a Mower that goes in at 11.3 Tiles a second is at 6.0
+half a second later, and wades at 5.9.
+
+**Out, it slides.** The Shallows soak a Mower in a moment. Out of them it
+dries to about a third every 2.6 seconds, and three times more slowly in full
+rain. The tyres of a soaked Mower spin up and lock up: it gathers speed and
+sheds it more slowly, so from 12 Tiles a second it coasts 3.5 Tiles where a
+dry one coasts 2.0. Its grip comes down, its travel lags its heading, and a
+hard turn at speed breaks it loose the way rain does, with no brake tap. Out
+of the Water and turning hard, it holds a slide of about 30 degrees for five
+seconds and then grips again. A dry Mower in the same turn holds 3.
+
+Two things end the slide on time. A Soak that only halves never reaches zero,
+so it is zero below 0.02. And a Mower drier than 0.25 grips like a dry one, or
+the last seconds of drying would be a slide nobody could see a reason for.
+
+Nothing here makes a Mower faster than it was, so the Lawn's `MAX_SPEED` does
+not move, and the Lawn is not told how wet a Mower is. Each screen works out
+the Soak of the Mowers it only sees from where they stand, by the same rule
+(`soakAfter`), so a Mower drips the same way on every screen.
+
+**It shows.** A wheel that breaks the face of the Water throws up a splash, a
+ring and a sound. A wading Mower throws spray behind its tyres, pushes rings
+out ahead of it that stop at the shore, and gathers foam round it at the
+waterline. It sinks by up to 0.4 Tiles, each wheel by its own depth, so a
+Mower that noses in dips its nose, and one that runs along the shore leans to
+the Water; the face of the Water hides what is under it. Out of the Water the
+paint is darker and shines, the deck drips, the tyres print the ground, and a
+slide throws a fan of spray. Reduced motion keeps the sink and the tilt,
+because they say where a Mower stands, and drops the rest.
 
 ## Why there is no server tick
 
@@ -791,8 +871,8 @@ an Achievement a rewritten client awards itself.
 
 So the Lawn works the same sum out for itself. It already holds the moment
 every Tile was mown and the Growth Rate of each one, so `fieldStanding` is
-`fieldProgress` from `public/fields.js` with the same Slack and the same
-stubble allowance, over the Tiles of one Field. Those two must stay identical,
+`fieldProgress` from `public/fields.js` with the same stubble allowance, over
+the Tiles of one Field. Those two must stay identical,
 for a sharper reason than the others: the flare, the banner and the card are
 one moment, and a Lawn that called the finish differently would put the medal a
 second to one side of the thing it belongs to.
@@ -1158,6 +1238,9 @@ both dimensions.
 - `scripts/check-achievements.mjs` — reads that table and says whether it holds
   together: one bit each, every Achievement reachable, none of them earned by a
   Mower that has done nothing, and the nine Field names the same as the map's.
+- `scripts/check-crowning.mjs` — leaves one Tile of each Field standing and asks
+  the real Lawn and the tracker what they make of it. Nobody is crowned until
+  the stroke that takes that Tile. It is `test:crowning` in `package.json`.
 - `src/index.ts` — the Worker (routing) and the `Lawn` Durable Object.
 - `public/index.html` — the whole client: WebGPU field, driving, socket, HUD.
   The Lawn is drawn as instanced 3D blades under one sun, from a camera that
