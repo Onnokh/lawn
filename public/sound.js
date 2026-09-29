@@ -86,9 +86,17 @@ export function createMowerSound(button) {
     wobble.gain.value = 90;
     noise.connect(flutter).connect(wobble);
     tones.forEach(tone => wobble.connect(tone.detune));
+    // Water round the wheels: a low wash that the pace of the Mower opens up.
+    const slosh = context.createBiquadFilter();
+    slosh.type = 'bandpass';
+    slosh.frequency.value = 420;
+    slosh.Q.value = 0.8;
+    const sloshGain = context.createGain();
+    sloshGain.gain.value = 0;
+    noise.connect(slosh).connect(sloshGain).connect(master);
     noise.start();
     return { context, master, tones, engine, engineGain, body, sub, subGain, blades, bladeGain,
-      firing, pulse, wobble, nextVariation: 0, drift: 0, roughness: 0, detune: 0.8 };
+      firing, pulse, wobble, slosh, sloshGain, buffer, nextVariation: 0, drift: 0, roughness: 0, detune: 0.8 };
   }
 
   async function unlock() {
@@ -127,7 +135,28 @@ export function createMowerSound(button) {
 
   return {
     cut(amount) { harvest += amount; },
-    update(speed, dt, active) {
+    /** A wheel breaks the face of the Water, `amount` from 0 to 1 by how fast. */
+    splash(amount) {
+      if (!audio || muted || document.hidden || audio.context.state !== 'running') return;
+      const { context, master, buffer } = audio;
+      const now = context.currentTime;
+      // A burst of the same noise, from a new place in it each time, that
+      // closes from a slap to a wash as it falls.
+      const source = context.createBufferSource();
+      source.buffer = buffer;
+      const tone = context.createBiquadFilter();
+      tone.type = 'lowpass';
+      tone.Q.value = 0.9;
+      tone.frequency.setValueAtTime(2600 + amount * 2400, now);
+      tone.frequency.exponentialRampToValueAtTime(380, now + 0.32);
+      const gain = context.createGain();
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.35 + amount * 0.9, now + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28 + amount * 0.25);
+      source.connect(tone).connect(gain).connect(master);
+      source.start(now, Math.random() * (buffer.duration - 0.7), 0.6);
+    },
+    update(speed, dt, active, wade = 0) {
       // Harvest is accumulated over the frame, so load does not depend on frame rate.
       const target = active ? harvest / Math.max(0.001, dt) : 0;
       harvest = 0;
@@ -158,6 +187,8 @@ export function createMowerSound(button) {
       body.gain.setTargetAtTime(2.5 + pace * 3 + load * 4.5, now, 0.12);
       blades.frequency.setTargetAtTime(650 + pace * 300 + load * 1100, now, 0.06);
       bladeGain.gain.setTargetAtTime(0.035 + pace * 0.035 + load * 0.24, now, 0.06);
+      audio.sloshGain.gain.setTargetAtTime(wade * (0.05 + pace * 0.5), now, 0.12);
+      audio.slosh.frequency.setTargetAtTime(340 + pace * 520 + audio.roughness * 120, now, 0.15);
       master.gain.setTargetAtTime(active && !muted && !document.hidden ? 0.08 + pace * 0.09 : 0, now, 0.06);
     },
   };

@@ -23,7 +23,8 @@
     "build:trees": "esbuild src/trees.ts --bundle --format=esm --outfile=public/trees.js",
     "test:trees": "npm run build:trees && node scripts/check-trees.mjs",
     "test:positions": "npm run build:driving && node scripts/check-positions.mjs",
-    "test:mowing": "npm run build:driving && node scripts/check-mowing.mjs"
+    "test:mowing": "npm run build:driving && node scripts/check-mowing.mjs",
+    "test:crowning": "npm run build:driving && npm run build:trees && node scripts/check-crowning.mjs"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260911.1",

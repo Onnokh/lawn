@@ -1,5 +1,6 @@
 import { treeAt, treeEarthAt, EARTH_RADIUS, TREES } from './trees.js';
 import { ringDistance, STREET_HALF_WIDTH, RING_WGSL } from './road.js';
+import { MOWER_SCALE } from './mowing.js';
 
 /**
  * The map of the Lawn.
@@ -12,7 +13,8 @@ import { ringDistance, STREET_HALF_WIDTH, RING_WGSL } from './road.js';
  *
  * - a **Path**, bare earth that a Mower crosses at the speed it was going;
  * - a **Street**, which a Mower drives fast on;
- * - **Water**, which it cannot cross but at the Bridge that cuts it.
+ * - **Water**, which it wades into at the edge and cannot cross but at the
+ *   Bridge that cuts it.
  *
  * A Street is a boundary and never a cut. Every Street is either a seam,
  * which lies between two Fields by construction, or the ring, which lies
@@ -45,9 +47,39 @@ export const SEEDS = [
 
 /** Half the width of a Path, in Tiles. Nothing grows on it. */
 export const PATH = 2.6;
-/** Half the width of open Water, in Tiles. A Mower cannot enter it. */
+/** Half the width of open Water, in Tiles. */
 export const WATER = 3.4;
-/** Bare bank between the Water and the grass, in Tiles. */
+/**
+ * Where the Shallows end and the Deep begins, in `wet`. A Mower drives
+ * through Water shallower than this, slowly, and comes out of it wet; the Deep
+ * in the middle of the run it cannot enter at all.
+ *
+ * The Deep is what keeps Water a seam. Where it parts the two banks it is
+ * wider than the Lawn's `WATER_STEP`, so no Report strides over it, and the
+ * Shallows and the bank beyond it keep the grass on the far side out of reach
+ * of the blades. At its ends it narrows to nothing, and there the Shallows
+ * join round it: a Mower may wade round the end of the Deep, where the
+ * Bridge or a Street already takes it across. `scripts/check-map.mjs` holds
+ * the map to that.
+ */
+export const SHALLOWS = 1.8;
+/**
+ * How deep a Mower's own client lets it wade: short of the Deep by a margin,
+ * so the straight line the Lawn reads between two Reports never cuts a corner
+ * into it. The Lawn stops a Mower at `SHALLOWS`, and an honest Mower never
+ * gets there.
+ */
+export const WADE = SHALLOWS - 0.3;
+/**
+ * Bare bank between the Water and the grass, in Tiles.
+ *
+ * A Mower wades into the Shallows to cut the grass beside them, so the bank
+ * need not be as wide as a Mower is. While all of the Water held a Mower off,
+ * it had to be: `wet` is measured in the frame of the seam, and far from the
+ * seeds one unit of it lies across as many as four Tiles of ground, so a
+ * narrow bank there left tufts further from dry ground than the blades reach,
+ * and a bank wide enough to reach them took 568 Tiles of grass.
+ */
 export const BANK = 1.6;
 /** Radius of the Bridge that cuts every run of Water, in Tiles. */
 export const BRIDGE = 6;
@@ -224,9 +256,40 @@ export function wetAt(x, y, width, height) {
   return placeAt(x, y, width, height).wet;
 }
 
-/** Banks and trunks a Mower of this radius cannot drive into. */
+/**
+ * The Deep and the trunks a Mower of this radius cannot drive into.
+ *
+ * The Shallows are not in it: a Mower wades through them. The Water holds the
+ * middle of a Mower and not its edge, so at `WADE` the nose may hang out over
+ * the Deep, the way a Mower stands at the edge of a drop. A trunk holds the
+ * edge, because a trunk is something to hit.
+ */
 export function blocked(x, y, width, height, radius) {
-  return wetAt(x, y, width, height) > -radius || treeAt(x, y, width, height, radius);
+  return wetAt(x, y, width, height) > WADE || treeAt(x, y, width, height, radius);
+}
+
+/**
+ * Where a Mower's wheels touch the ground, in Tiles along and across it: the
+ * two rear wheels, then the two front ones.
+ */
+export const WHEELS = [[-0.57, -0.715], [-0.57, 0.715], [0.61, -0.715], [0.61, 0.715]]
+  .map(([along, across]) => [along * MOWER_SCALE, across * MOWER_SCALE]);
+
+/** How deep each wheel of a Mower stands, from 0 on dry ground to 1 at `WADE`. */
+export function wheelDepths(x, y, heading, width, height) {
+  const ca = Math.cos(heading), sa = Math.sin(heading);
+  return WHEELS.map(([along, across]) => Math.max(0, Math.min(1,
+    wetAt(x + ca * along - sa * across, y + sa * along + ca * across, width, height) / WADE)));
+}
+
+/**
+ * How far a Mower stands in the Water, from 0 on dry ground to 1 at `WADE`:
+ * the mean depth under its four wheels, so a Mower that noses in is a little
+ * in and a Mower that is all the way in is all the way in.
+ */
+export function wadeAt(x, y, heading, width, height) {
+  const depths = wheelDepths(x, y, heading, width, height);
+  return (depths[0] + depths[1] + depths[2] + depths[3]) / 4;
 }
 
 /**
@@ -262,20 +325,12 @@ export function buildFields(width, height) {
 }
 
 /**
- * How much of a Field may stand and the Field still count as cut: one part in
- * a hundred. Without it the end of a quest is not mowing, it is searching —
- * one tuft in ten thousand Tiles, somewhere in a parcel the size of a screen,
- * and the Mower that plainly cut the Field has to comb it to be told so.
- */
-export const FIELD_SLACK = 0.01;
-
-/**
  * How far through a Field a Mower is, from 0 to 100.
  *
- * It measures against the goal and not against the last blade, so the bar
- * fills exactly as the quest completes. A Field that reads 97% still has 3%
- * standing and is not finished: the Slack is what the number is measured
- * against, not a number taken off the end of it.
+ * It measures against the last blade. A Field is cut when all of it is cut:
+ * nothing stands for free, so 100 belongs to the stroke that takes the last
+ * tuft. A Field used to count as cut with one part in a hundred standing,
+ * which was a hundred Tiles nobody cut and a Field crowned all the same.
  */
 export function fieldProgress(tiles, heightAt) {
   if (!tiles.length) return 0;
@@ -284,8 +339,7 @@ export function fieldProgress(tiles, heightAt) {
     // Short stubble counts as cut, so slow regrowth doesn't prevent completion.
     remaining += Math.max(0, Math.min(1, (heightAt(i) - 0.1) / 0.9));
   }
-  const cut = 1 - remaining / tiles.length;
-  return 100 * Math.min(1, cut / (1 - FIELD_SLACK));
+  return 100 * (1 - remaining / tiles.length);
 }
 
 /**
@@ -315,7 +369,8 @@ export function buildMapImage(width, height, done = [], scale = 2) {
       const wx = (x + 0.5) / scale, wy = (y + 0.5) / scale;
       const { field, wet, street } = placeAt(wx, wy, width, height);
       let c;
-      if (wet > 0) c = wet > 1.2 ? [52, 96, 128] : [78, 126, 152];
+      // The Shallows are the pale water: pale is where a Mower may drive.
+      if (wet > 0) c = wet > SHALLOWS ? [52, 96, 128] : [96, 146, 164];
       else if (street <= STREET_HALF_WIDTH) c = [195, 171, 126];
       else if (field < 0) c = wet > -BANK ? [122, 104, 72] : [163, 138, 96];
       else c = greens[field];
@@ -343,6 +398,7 @@ export const PLACE_WGSL = `
 ${RING_WGSL}
 const PATH = ${PATH.toFixed(3)};
 const WATER = ${WATER.toFixed(3)};
+const SHALLOWS = ${SHALLOWS.toFixed(3)};
 const BANK = ${BANK.toFixed(3)};
 const BRIDGE = ${BRIDGE.toFixed(3)};
 const SHORE_RADIUS = ${SHORE_RADIUS.toFixed(3)};

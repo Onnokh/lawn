@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-import { stepDrive, slipstream, MAX_SPEED } from '../public/driving.js';
+import { stepDrive, slipstream, soakAfter, MAX_SPEED } from '../public/driving.js';
 import { streetAt } from '../public/fields.js';
 import { ringDistance, STREET_HALF_WIDTH } from '../public/road.js';
 import { blocked, placeAt } from '../public/fields.js';
@@ -104,6 +104,36 @@ for (const [w, h] of [[408, 272], [288, 192]]) {
   }
   assert.equal(streetTiles.size, 0, 'the ring and the run across the middle are one Street');
 }
+// The Water: it holds a Mower back while it wades, and a Mower that comes
+// out soaked slides through a hard turn that a dry one takes on its tyres,
+// until it has dried.
+const onGrass = { street: 0, grass: 1 };
+const dryCruise = driver(), wading = driver();
+run(dryCruise, onGrass, 5); run(wading, { ...onGrass, wade: 1 }, 5);
+assert.ok(wading.v < dryCruise.v * 0.7, 'the Water holds a wading Mower back');
+assert.ok(wading.soak > 0.99, 'a wading Mower is soaked');
+const quick = driver(); run(quick, { ...onGrass, wade: 0.5 }, 0.5);
+assert.ok(quick.soak > 0.9, 'a moment in the Shallows soaks a Mower');
+const wet = { ...dryCruise, soak: 1 }, dryTurn = { ...dryCruise };
+assert.ok(run(wet, { ...onGrass, turn: 1 }, 1 / 60).drifting, 'a soaked Mower breaks loose in a hard turn');
+assert.ok(!run(dryTurn, { ...onGrass, turn: 1 }, 1 / 60).drifting, 'a dry one holds the same turn');
+run(wet, { ...onGrass, turn: 1 }, 0.5); run(dryTurn, { ...onGrass, turn: 1 }, 0.5);
+assert.ok(Math.abs(wet.a - wet.travel) > Math.abs(dryTurn.a - dryTurn.travel) + 0.2, 'the soaked Mower slides out of the turn');
+const drying = { ...dryCruise, soak: 1 };
+run(drying, onGrass, 7);
+assert.ok(!run(drying, { ...onGrass, turn: 1 }, 1 / 60).drifting, 'seven seconds out of the Water, it grips again');
+run(drying, onGrass, 4);
+assert.equal(drying.soak, 0, 'and it dries all the way');
+assert.ok(soakAfter(1, 0, 1, 5) > soakAfter(1, 0, 0, 5), 'rain keeps a Mower wet for longer');
+for (const [wade, seconds] of [[0.6, 0.4], [0, 3]]) {
+  const soaks = [30, 60, 120].map(hz => {
+    let soak = 0.5;
+    for (let i = 0; i < seconds * hz; i++) soak = soakAfter(soak, wade, 0, 1 / hz);
+    return soak;
+  });
+  assert.ok(Math.max(...soaks) - Math.min(...soaks) < 1e-9, 'a Mower soaks and dries alike at any frame rate');
+}
+
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const start = html.indexOf('const skidMarks = []');
 const end = html.indexOf('let wakeAnchor', start);
@@ -121,4 +151,4 @@ sliding.x += 20; skids.recordSkids(100);
 assert.equal(skids.skidMarks.length, 2, 'corrections do not draw a long streak');
 sliding.driftX = 0; skids.recordSkids(13000);
 assert.equal(skids.skidMarks.length, 0, 'marks expire and stopped wheels leave none');
-console.log('Driving: Street speed, a complete collision-free pass, smooth brake-tap drift, stopping, grip recovery, frame rates, passing clearance, and wheel marks verified.');
+console.log('Driving: Street speed, a complete collision-free pass, smooth brake-tap drift, stopping, grip recovery, frame rates, passing clearance, wading and the wet slide, and wheel marks verified.');
