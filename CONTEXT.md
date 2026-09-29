@@ -13,10 +13,8 @@ back. If nobody mows, the lawn becomes fully overgrown again.
   capsule with radius `MOW_RADIUS` around that line.
 - **Field** — one parcel of the Lawn, and one quest. There are nine. A Field
   is the ground that lies nearer its own seed than any other seed, so no
-  Field is a box and no two are the same shape.
-- **Slack** — the last part in a hundred of a Field, which may stand and the
-  Field still count as cut. It is what turns the end of a quest back into
-  mowing.
+  Field is a box and no two are the same shape. It is finished when every
+  Tile of it is cut: nothing stands for free.
 - **Seam** — the boundary between two Fields, where the two nearest seeds are
   the same distance away. Every seam is a Path, a Street or Water, and those
   three are the whole map.
@@ -35,7 +33,9 @@ back. If nobody mows, the lawn becomes fully overgrown again.
 - **Bridge** — the dry crossing that cuts every run of Water, at the middle
   point between the two seeds it runs between. It is what keeps Water a
   detour and not a wall.
-- **Bank** — the bare ground between the Water and the grass.
+- **Bank** — the bare ground between the Water and the grass. It is as wide
+  as a Mower is held off the Water, so every blade beside the Water grows
+  where a Mower can stand.
 - **Report** — the one message a Mower sends about itself: where it is and
   which way it points. It is the Mow Stroke and the position at once, because
   both say the same thing about the same movement. See "What a report costs".
@@ -170,14 +170,23 @@ three before it was believed.
 whether it holds together: how much of the Lawn is grass, Path, Street and
 Water, and whether every Tile of every Field can still be cut. It holds the
 map to three rules and fails when one breaks — every Field is one piece, every
-Tile of dry ground can be reached, and no Tile is both wet and on a Street.
-The first is the one that says no Street splits a Field.
+Tile of dry ground can be reached and every Tile of grass cut, and no Tile is
+both wet and on a Street. The first is the one that says no Street splits a
+Field.
 
-A crumb is not a split. The bank is narrower than a Mower is wide, so the odd
-Tile of grass ends up in a pocket no Mower can enter, and the wander of a Path
-now and then pinches one off. The Slack is what says how much of that a quest
-can carry, and it is the same Slack the tracker measures against: below it,
-nothing on the screen can tell.
+A Field is finished only when all of it is cut, so the map may hold no crumbs.
+One Tile of grass that the wander of a Path pinches off is a split, and one
+Tile in a pocket no Mower can enter is a quest nobody can finish. The check
+fails on either.
+
+The Bank is what keeps the pockets away. `wet` is measured in the frame of a
+seam, and far from the seeds one Tile of it lies across as many as four Tiles
+of ground. The bank was 1.6 and a Mower is held 2.21 off the Water, so there
+the strip of grass between the bank and the nearest place a Mower may drive
+was wider than the blades reach, and a tuft of Foxglove Pasture stood for
+ever. The bank is now `COLLISION_RADIUS`, the same number as the hold, so every
+blade beside the Water grows where a Mower can stand. It cost the six Fields
+beside the Water about one Tile in a hundred of their grass.
 
 ## Finishing a Field is worth a moment
 
@@ -212,22 +221,31 @@ the page on a cut Lawn threw a celebration for somebody else's work.
 The flare is motion, so a visitor who asks for less of it keeps the banner,
 the tracker and the map, and the Lawn stays as it was.
 
-## The end of a quest is mowing, not searching
+## A Field is cut when all of it is cut
 
-A Field is ten thousand Tiles. Asking for every one of them made the last
+A Field used to count as cut with one part in a hundred still standing. That
+was the Slack, and it was there because asking for every Tile made the last
 minute of a quest a different game: the grass was plainly cut, the tracker
 said 99%, and the Mower drove the parcel again looking for one tuft it could
 not see from the seat.
 
-So a Field counts as cut with one part in a hundred still standing. That is
-about a hundred Tiles — a patch some ten Tiles across, which is a thing a
-Mower can miss without being careless, and not a thing it can leave half the
-Field standing behind.
+It went, because it was a freebie. One part in a hundred of a Field is about a
+hundred Tiles, a patch some ten Tiles across that nobody cut, and every Mower
+in the Field was crowned for it all the same. Now the stroke that takes the
+last Tile is the one that finishes the Field, and the Lawn and the tracker
+both measure against that last blade.
 
-The number on the screen is measured against that goal, not against the last
-blade. The bar therefore fills exactly as the quest completes, and it never
-reads 97% and then jumps: 97% really is 3% standing. Slack is what the
-progress is measured against; it is never taken off the end of it.
+The search is the cost, and it was taken with open eyes. The tracker keeps
+100% for the finish, so a Field reads 99% for about its last hundred Tiles,
+down to the last one. The Mower finds them by eye: cut turf is pale and
+standing grass is deep, which is the reason given under "A cut blade is pale".
+
+Two things still count as cut, and neither is a freebie. Stubble below a tenth
+of full height is grass a Mower did take, growing back. And grass never grows
+where no Mower can cut it, because `scripts/check-map.mjs` fails a map where it
+does, so a quest never waits on a tuft nobody can reach.
+`npm run test:crowning` leaves one Tile of each Field standing and proves that
+the Lawn crowns nobody for it.
 
 ## Driving has weight
 
@@ -791,8 +809,8 @@ an Achievement a rewritten client awards itself.
 
 So the Lawn works the same sum out for itself. It already holds the moment
 every Tile was mown and the Growth Rate of each one, so `fieldStanding` is
-`fieldProgress` from `public/fields.js` with the same Slack and the same
-stubble allowance, over the Tiles of one Field. Those two must stay identical,
+`fieldProgress` from `public/fields.js` with the same stubble allowance, over
+the Tiles of one Field. Those two must stay identical,
 for a sharper reason than the others: the flare, the banner and the card are
 one moment, and a Lawn that called the finish differently would put the medal a
 second to one side of the thing it belongs to.
@@ -1158,6 +1176,9 @@ both dimensions.
 - `scripts/check-achievements.mjs` — reads that table and says whether it holds
   together: one bit each, every Achievement reachable, none of them earned by a
   Mower that has done nothing, and the nine Field names the same as the map's.
+- `scripts/check-crowning.mjs` — leaves one Tile of each Field standing and asks
+  the real Lawn and the tracker what they make of it. Nobody is crowned until
+  the stroke that takes that Tile. It is `test:crowning` in `package.json`.
 - `src/index.ts` — the Worker (routing) and the `Lawn` Durable Object.
 - `public/index.html` — the whole client: WebGPU field, driving, socket, HUD.
   The Lawn is drawn as instanced 3D blades under one sun, from a camera that

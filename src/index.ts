@@ -5,7 +5,7 @@ import { effectiveElapsedMs } from "./weather";
 import { motion } from "./positions";
 import { MOW_RADIUS, COLLISION_RADIUS, forEachMownTile } from "./mowing";
 import { BALL_RADIUS, BALL_STEP, createBall, ballMoving, hitBall, stepBall, type Ball, type BallMower, type BallContact } from "./ball";
-import { ACHIEVEMENTS, FIELD_NAMES, FIELD_SLACK, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
+import { ACHIEVEMENTS, FIELD_NAMES, countHeld, earnedMask, emptyTally, type Tally } from "./achievements";
 import { trackEvent, type RybbitEnv } from "./analytics";
 import { DurableObject } from "cloudflare:workers";
 
@@ -106,7 +106,8 @@ const SEEDS: [number, number][] = [
 ];
 const PATH = 2.6;
 const WATER = 3.4;
-const BANK = 1.6;
+/** As wide as a Mower is held off the Water, so no blade grows out of its reach. */
+const BANK = COLLISION_RADIUS;
 const BRIDGE = 6;
 /** Mirrors `SEAMS` in `public/fields.js`: the seams that carry Water, and the Streets. */
 const WATERS = [[1, 2], [5, 6], [7, 8]];
@@ -249,7 +250,7 @@ function fieldStanding(tiles: Uint32Array, mownAt: Uint32Array, now: number): nu
     // Short stubble counts as cut, so slow regrowth doesn't prevent completion.
     remaining += Math.max(0, Math.min(1, (bladeHeight(mownAt[i], REGROW[i], now) - 0.1) / 0.9));
   }
-  return 100 * Math.min(1, (1 - remaining / tiles.length) / (1 - FIELD_SLACK));
+  return 100 * (1 - remaining / tiles.length);
 }
 
 /**

@@ -6,6 +6,7 @@ import ts from 'typescript';
 import { placeAt } from '../public/fields.js';
 import { treeEarthAt } from '../public/trees.js';
 import { ringDistance, STREET_HALF_WIDTH } from '../public/road.js';
+import { COLLISION_RADIUS } from '../public/mowing.js';
 
 const source = readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
 const start = source.indexOf('const SEEDS:');
@@ -16,12 +17,13 @@ const start = source.indexOf('const SEEDS:');
 // rot unnoticed again.
 const end = source.indexOf('/** Water and trunks stop', start);
 assert.ok(start >= 0 && end > start, 'cannot find the map in src/index.ts');
-// The Lawn's own `placeAt` asks the trees where the bare earth is, so the
-// sandbox is handed the same answer the client uses. Anything the map depends
-// on has to come in here, or this check tests a map that is not the map.
+// The Lawn's own `placeAt` asks the trees where the bare earth is, and the
+// Mower how wide the bank is, so the sandbox is handed the same answers the
+// client uses. Anything the map depends on has to come in here, or this check
+// tests a map that is not the map.
 const server = vm.runInNewContext(ts.transpile(source.slice(start, end) + '\nplaceAt;', {
   target: ts.ScriptTarget.ES2022,
-}), { treeEarthAt, ringDistance, STREET_HALF_WIDTH });
+}), { treeEarthAt, ringDistance, STREET_HALF_WIDTH, COLLISION_RADIUS });
 let checked = 0;
 for (const [width, height] of [[408, 272], [288, 192]]) {
   for (let y = 1; y < height - 1; y += 0.7) {

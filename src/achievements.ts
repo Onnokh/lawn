@@ -48,14 +48,6 @@ export interface Tally {
 }
 
 /**
- * The last part in a hundred of a Field, which may stand and the Field still
- * count as cut. A copy of `FIELD_SLACK` in `public/fields.js`, which the World
- * Quest Tracker measures against and the Lawn now measures against too;
- * `scripts/check-achievements.mjs` proves the two are the same.
- */
-export const FIELD_SLACK = 0.01;
-
-/**
  * Times a Mower must be there as one Field is finished before that Field has
  * plainly grown back and been cut again under its wheels.
  */

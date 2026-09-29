@@ -7,20 +7,19 @@
  * grass. It holds the map to three rules and fails if one of them breaks:
  *
  * - every Field is one piece, so no Street or run of Water splits a parcel.
- *   A crumb smaller than the Slack is not a split: it is a Tile or two the
- *   wander of a Path has pinched off, and the quest cannot notice it;
- * - a Mower can reach every Tile of dry ground, and can cut all but a crumb
- *   of every Field. The bank is narrower than a Mower is wide, so the odd
- *   Tile of grass ends up in a pocket no Mower can enter; the Slack is what
- *   says how many of those a quest can carry, and it is the same Slack the
- *   tracker measures against;
+ *   A Field is cut only when all of it is cut, so even a crumb of one Tile
+ *   that the wander of a Path has pinched off is a split;
+ * - a Mower can reach every Tile of dry ground, and can cut every Tile of
+ *   every Field. One tuft in a pocket no Mower can enter is a quest nobody
+ *   can finish. The bank is as wide as a Mower is held off the Water, which
+ *   is what keeps every Tile of grass beside the Water in reach;
  * - no Tile is both wet and on a Street, which is what lets the shoreline
  *   ignore the seams and stay continuous.
  *
  *     node scripts/check-map.mjs [width] [height]
  */
 import { MOW_RADIUS, COLLISION_RADIUS } from '../public/mowing.js';
-import { FIELD_NAMES, FIELD_SLACK, placeAt, blocked } from '../public/fields.js';
+import { FIELD_NAMES, placeAt, blocked } from '../public/fields.js';
 import { STREET_HALF_WIDTH } from '../public/road.js';
 
 const W = Number(process.argv[2] ?? 408);
@@ -153,13 +152,9 @@ const broken = [];
 if (cutOff) broken.push(`${cutOff} Tiles of dry ground a Mower cannot reach`);
 if (drowned) broken.push(`${drowned} wet Tiles on a Street`);
 for (const [i, name] of FIELD_NAMES.entries()) {
-  if (split[i] > counts[i].tiles * FIELD_SLACK) {
-    broken.push(`${name} is split: ${split[i]} Tiles are off its main piece, which is more than the Slack`);
-  }
+  if (split[i]) broken.push(`${name} is split: ${split[i]} Tiles are off its main piece`);
   const pocket = counts[i].tiles - counts[i].reached;
-  if (pocket > counts[i].tiles * FIELD_SLACK) {
-    broken.push(`${name} has ${pocket} Tiles of grass a Mower cannot cut, which is more than the Slack`);
-  }
+  if (pocket) broken.push(`${name} has ${pocket} Tiles of grass a Mower cannot cut, so it can never be finished`);
 }
 if (broken.length) {
   console.error('The map does not hold together:');

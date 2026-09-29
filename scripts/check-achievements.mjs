@@ -11,19 +11,14 @@
  *
  *     node scripts/check-achievements.mjs
  */
-import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIFT_STEPS, DRIVE_STEPS, FIELD_NAMES, FIELD_SLACK, THRICE, TIERS, earned, earnedMask, emptyTally, holds } from '../public/achievements.js';
-import { FIELD_NAMES as MAP_NAMES, FIELD_SLACK as MAP_SLACK } from '../public/fields.js';
+import { ACHIEVEMENTS, BLADE_STEPS, BUMP_STEPS, DRIFT_STEPS, DRIVE_STEPS, FIELD_NAMES, THRICE, TIERS, earned, earnedMask, emptyTally, holds } from '../public/achievements.js';
+import { FIELD_NAMES as MAP_NAMES } from '../public/fields.js';
 
 const problems = [];
 
 // The names the table copies are the names the map draws.
 if (FIELD_NAMES.join('|') !== MAP_NAMES.join('|')) {
   problems.push(`field names differ from the map:\n    table: ${FIELD_NAMES.join(', ')}\n    map:   ${MAP_NAMES.join(', ')}`);
-}
-
-// The Slack the Lawn forgives is the Slack the Tracker forgives.
-if (FIELD_SLACK !== MAP_SLACK) {
-  problems.push(`the Slack differs from the map: table ${FIELD_SLACK}, map ${MAP_SLACK}`);
 }
 
 // One bit, one Achievement, and every bit inside a Uint32.
