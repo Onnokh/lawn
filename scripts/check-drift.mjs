@@ -31,6 +31,9 @@ function lawn() {
     broadcastNote(note) { if (note.k === 'won') this.won.push(note.w); } });
   // Isolate the drift from terrain; the travel budget and the banks have their own checks.
   game.dryRun = (_from, _ux, _uy, distance) => distance;
+  // The Lawn also tells Rybbit about each Achievement it awards. This env holds no API key, so nothing is sent.
+  game.env = {};
+  game.ctx = { waitUntil() {}, getTags: () => [] };
   return game;
 }
 
